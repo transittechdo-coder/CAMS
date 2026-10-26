@@ -1,11 +1,11 @@
 // All CAMS pages. Each page function fills `el` and may return a cleanup function.
 import {
   h, get, post, put, patch, del, upload, icon, toast, fail, dialog, confirmBox, field, formValues,
-  ago, clock, duration, where, CATEGORIES, cap, thumb, photoUrl, snapUrl, POSE_ICON,
+  ago, clock, duration, where, CATEGORIES, PLURAL, cap, thumb, photoUrl, snapUrl, POSE_ICON,
 } from "./util.js";
 import { MapView } from "./mapview.js";
 import { trailFromSightings, centroid } from "./map2d.js";
-import { openEnrol } from "./enrol.js";
+import { openEnrol, POSES, POSE_LABEL } from "./enrol.js";
 import { state, can, go } from "./app.js";
 import { startTour, GUIDE } from "./tour.js";
 
@@ -20,8 +20,8 @@ function emptyState(title, text, action) {
 
 function anglesBadge(angles) {
   const set = new Set((angles || "").split(",").filter(Boolean));
-  return h("span", { class: "angles", title: set.size ? `Angles: ${[...set].join(", ")}` : "No face captured" },
-    ["front", "left", "right", "up", "down"].map((a) => h("i", { class: set.has(a) ? "on" : "" })));
+  return h("span", { class: "angles", title: set.size ? `${set.size} of 9 views: ${[...set].map((a) => POSE_LABEL[a] || a).join(", ")}` : "No face captured" },
+    POSES.map((p) => h("i", { class: set.has(p.id) ? "on" : "" })));
 }
 
 function pinFor(ls, label, extra = {}) {
@@ -280,7 +280,7 @@ export function addPersonDialog(after) {
 
 async function people(el) {
   const q = h("input", { type: "search", placeholder: "Search name, ID or class", "aria-label": "Search people" });
-  const catSel = h("select", { "aria-label": "Type" }, h("option", { value: "" }, "Everyone"), CATEGORIES.map((c) => h("option", { value: c }, cap(c) + "s")));
+  const catSel = h("select", { "aria-label": "Type" }, h("option", { value: "" }, "Everyone"), CATEGORIES.map((c) => h("option", { value: c }, PLURAL[c])));
   const groupSel = h("select", { "aria-label": "Class or department" }, h("option", { value: "" }, "All classes"));
   const csvIn = h("input", { type: "file", accept: ".csv,text/csv", class: "hidden" });
   const body = h("tbody");
@@ -291,7 +291,7 @@ async function people(el) {
       can("operator") ? h("button", { class: "primary", id: "add-person", onclick: () => addPersonDialog(load) }, icon("plus"), "Add person") : null),
     h("div", { class: "row", style: { marginBottom: "12px" } }, h("div", { class: "search", style: { flex: "1 1 260px" } }, icon("search"), q), catSel, groupSel),
     h("div", { class: "panel", style: { overflowX: "auto" } }, h("table", { class: "list" },
-      h("thead", {}, h("tr", {}, ["", "Name", "ID", "Class / department", "Type", "Face angles", "Consent", "Last seen"].map((t) => h("th", {}, t)))), body)),
+      h("thead", {}, h("tr", {}, ["", "Name", "ID", "Class / department", "Type", "360° views", "Consent", "Last seen"].map((t) => h("th", {}, t)))), body)),
   );
   get("/api/people/groups").then((g) => groupSel.append(...g.map((x) => h("option", { value: x }, x))));
   let timer;
@@ -346,21 +346,25 @@ async function person(el, id) {
       h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h2", {}, "Face pictures"),
         h("button", { class: "primary small", onclick: () => openEnrol(p, loadSamples) }, icon("face"), "Capture face")),
         h("div", { class: "panel-body" }, samples,
-          h("p", { class: "hint", style: { marginTop: "10px" } }, "Capture all five angles for the best results. Delete blurry or wrong pictures."))),
+          h("p", { class: "hint", style: { marginTop: "10px" } }, "Capture all nine 360° views for the best results: seven face views for recognition, plus back and top for guards to compare. Delete blurry or wrong pictures."))),
     ),
   );
   async function loadSamples() {
     const fresh = await get(`/api/people/${id}`);
-    if (!fresh.samples.length) {
+    if (!fresh.samples.length && !fresh.references.length) {
       samples.replaceChildren(h("p", { class: "muted" }, "No face captured yet. Press Capture face."));
       return;
     }
-    samples.replaceChildren(...fresh.samples.map((s) => h("div", { class: "sample" },
-      h("img", { src: `/api/samples/${s.id}/image`, alt: `${s.angle} view` }),
-      h("span", {}, s.angle),
-      h("button", { "aria-label": `Delete ${s.angle} picture`, onclick: async () => {
-        try { await del(`/api/samples/${s.id}`); loadSamples(); } catch (e) { fail(e); }
-      } }, "x"))));
+    const tile = (src, angle, delUrl, ref) => h("div", { class: "sample", title: ref ? "Reference picture (not used for recognition)" : "Used for recognition" },
+      h("img", { src, alt: `${POSE_LABEL[angle] || angle} view` }),
+      h("span", {}, (POSE_LABEL[angle] || angle) + (ref ? " (ref)" : "")),
+      h("button", { "aria-label": `Delete ${angle} picture`, onclick: async () => {
+        try { await del(delUrl); loadSamples(); } catch (e) { fail(e); }
+      } }, "x"));
+    const order = (a) => POSES.findIndex((p) => p.id === a.angle);
+    samples.replaceChildren(
+      ...fresh.samples.slice().sort((a, b) => order(a) - order(b)).map((s) => tile(`/api/samples/${s.id}/image`, s.angle, `/api/samples/${s.id}`, false)),
+      ...fresh.references.map((r) => tile(`/api/references/${r.id}/image`, r.angle, `/api/references/${r.id}`, true)));
   }
   await loadSamples();
 }
@@ -436,6 +440,42 @@ function scanDialog(after) {
   }).catch((e) => list.replaceChildren(h("p", {}, e.message)));
 }
 
+function activityDialog(cam, after) {
+  const a = cam.analytics || {};
+  const [from, to] = (a.after_hours || "").split("-");
+  const body = h("div", { class: "stack" },
+    h("p", { class: "muted", style: { margin: 0 } }, "CAMS has a person-detection AI that runs on this PC. These rules use it to flag situations for a guard to check. They cannot judge what a person intends."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "people", checked: a.people !== false }), "Detect people on this camera (needed for the rules below)"),
+    h("div", { class: "grid2" },
+      field("Loitering: alert when someone stays longer than (minutes)", h("input", { name: "loiter_minutes", type: "number", min: 0, step: 1, value: a.loiter_minutes || 0 }), "0 = off. Try 5 for gates and corridors."),
+      field("Crowd: alert when this many people gather", h("input", { name: "crowd_count", type: "number", min: 0, value: a.crowd_count || 0 }), "0 = off. They must stay together for 10 seconds.")),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "running", checked: !!a.running }), "Alert when someone is running (corridors, stores, offices)"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "after_on", checked: !!a.after_hours }), "Alert for anyone seen at this camera between"),
+    h("div", { class: "row" }, h("input", { type: "time", name: "from", value: from || "18:00" }), "and", h("input", { type: "time", name: "to", value: to || "06:00" })),
+    h("p", { class: "hint", style: { margin: 0 } }, "Closed hours can also be set for a whole building in the Campus builder."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "tamper", checked: a.tamper !== false }), "Alert when the camera is covered, blurred or turned away"),
+  );
+  dialog({ title: `Activity detection: ${cam.name}`, body, actions: [{ label: "Cancel" }, { label: "Save rules", class: "primary", run: async () => {
+    const v = formValues(body);
+    await put(`/api/cameras/${cam.id}/analytics`, {
+      people: v.people, loiter_minutes: +v.loiter_minutes || 0, crowd_count: +v.crowd_count || 0, running: v.running,
+      after_hours: v.after_on ? `${v.from}-${v.to}` : "", tamper: v.tamper,
+    });
+    toast("Activity rules saved"); after();
+  } }] });
+}
+
+function ruleTags(a) {
+  if (!a || a.people === false) return [];
+  const t = [];
+  if (a.loiter_minutes) t.push(`loiter ${a.loiter_minutes} min`);
+  if (a.crowd_count) t.push(`crowd ${a.crowd_count}+`);
+  if (a.running) t.push("running");
+  if (a.after_hours) t.push(`closed ${a.after_hours}`);
+  if (a.tamper) t.push("tamper");
+  return t;
+}
+
 async function cameras(el) {
   const body = h("tbody");
   el.append(
@@ -454,11 +494,13 @@ async function cameras(el) {
     body.replaceChildren(...cams.map((c) => h("tr", {},
       h("td", {}, h("span", { class: "row" }, h("span", { class: `dot ${c.enabled ? c.live.status : ""}` }), c.enabled ? c.live.status : "off")),
       h("td", {}, h("b", {}, c.name), c.restricted ? h("span", { class: "tag red", style: { marginLeft: "6px" } }, "Restricted") : null,
+        h("div", { class: "row", style: { gap: "4px", marginTop: "2px" } }, ruleTags(c.analytics).map((t) => h("span", { class: "tag" }, t))),
         c.live.status === "offline" ? h("div", { class: "hint" }, c.live.error) : null),
       h("td", { class: "muted", style: { maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.source_display),
       h("td", { class: "num" }, c.live.status === "online" ? `${c.live.width}x${c.live.height}, ${c.live.fps} fps` : ""),
       h("td", {}, c.map_x != null ? h("span", { class: "tag teal" }, "Placed") : h("button", { class: "small", onclick: () => go("builder") }, "Place on map")),
       h("td", {}, h("div", { class: "row end" },
+        h("button", { class: "small", onclick: () => activityDialog(c, load) }, "Activity rules"),
         h("button", { class: "small", onclick: () => cameraDialog(c, load) }, "Edit"),
         h("button", { class: "small danger", onclick: async () => {
           if (await confirmBox("Delete camera?", `${c.name} will be removed. Past sightings stay in the log.`)) { await del(`/api/cameras/${c.id}`); load(); }
@@ -539,6 +581,136 @@ async function builder(el) {
 
   const toolBtn = (id, label, ic, msg) => h("button", { class: "tool", "aria-pressed": String(mode === id), onclick: () => setMode(id, msg) }, icon(ic), label);
 
+  const groupsP = get("/api/people/groups").catch(() => []);
+
+  function rotateBuilding(b, deg) {
+    const [cx, cy] = centroid(b.polygon);
+    const a = (deg * Math.PI) / 180, cos = Math.cos(a), sin = Math.sin(a);
+    b.polygon = b.polygon.map(([x, y]) => [
+      Math.round((cx + (x - cx) * cos - (y - cy) * sin) * 10) / 10,
+      Math.round((cy + (x - cx) * sin + (y - cy) * cos) * 10) / 10]);
+    b.rotation = ((b.rotation || 0) + deg + 360) % 360;
+    saveBuilding(b); map.render(); drawSide();
+  }
+
+  function floorName(b, i) {
+    return (b.floor_names || [])[i] || (i === 0 ? "Ground floor" : `Floor ${i}`);
+  }
+
+  function buildingPanels(bld) {
+    const f = h("div", { class: "stack" },
+      field("Name", h("input", { name: "name", value: bld.name })),
+      h("div", { class: "grid3" },
+        field("Type", h("select", { name: "kind" }, Object.entries(KINDS).map(([k, l]) => h("option", { value: k, selected: k === bld.kind }, l)))),
+        field("Height m", h("input", { name: "height_m", type: "number", value: bld.height_m, min: 1, step: 0.5 })),
+        field("Floors", h("input", { name: "floors", type: "number", value: bld.floors, min: 1, max: 200 }))),
+      h("div", { class: "swatches", role: "group", "aria-label": "Colour" }, COLORS.map((c) => h("button", { style: { background: c }, "aria-label": c, "aria-pressed": String(c === bld.color), onclick: () => { bld.color = c; saveBuilding(bld); map.render(); drawSide(); } }))),
+    );
+    f.addEventListener("change", () => {
+      const v = formValues(f);
+      const floors = Math.max(1, +v.floors || 1);
+      // keep height sensible when floors are added (about 3.2 m per floor)
+      const height = floors !== bld.floors && +v.height_m === bld.height_m ? Math.max(bld.height_m, floors * 3.2) : +v.height_m || 6;
+      Object.assign(bld, { name: v.name, kind: v.kind, height_m: Math.round(height * 10) / 10, floors });
+      saveBuilding(bld); map.render(); drawSide();
+    });
+    const arrange = h("div", { class: "row" },
+      h("button", { class: "small", onclick: () => rotateBuilding(bld, -15), title: "Turn left 15°" }, "Turn left"),
+      h("button", { class: "small", onclick: () => rotateBuilding(bld, 15), title: "Turn right 15°" }, "Turn right"),
+      h("button", { class: "small", onclick: () => rotateBuilding(bld, 90) }, "90°"),
+      h("button", { class: "small", onclick: async () => {
+        const copy = { ...bld, name: `${bld.name} copy`, polygon: bld.polygon.map(([x, y]) => [x + 8, y + 8]) };
+        delete copy.id;
+        const { id } = await post("/api/buildings", copy);
+        await reload(); selected = { kind: "building", id }; map.select(selected); drawSide();
+      } }, "Duplicate"));
+
+    const panels = [h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Selected shape"),
+      h("button", { class: "small danger", onclick: async () => {
+        if (!(await confirmBox("Delete this shape?", `${bld.name} and its access rules will be removed from the map.`))) return;
+        await del(`/api/buildings/${bld.id}`); selected = null; map.select(null); reload();
+      } }, "Delete")),
+      h("div", { class: "panel-body stack" }, f, arrange, h("p", { class: "hint", style: { margin: 0 } }, "Drag the shape to move it. Drag a corner to reshape.")))];
+
+    if (bld.kind === "building") {
+      const list = h("div", { class: "floors" });
+      for (let i = bld.floors - 1; i >= 0; i--) {
+        const inp = h("input", { value: floorName(bld, i), "aria-label": `Name of floor ${i}` });
+        inp.addEventListener("change", () => {
+          const names = Array.from({ length: bld.floors }, (_, k) => floorName(bld, k));
+          names[i] = inp.value.trim() || floorName({}, i);
+          bld.floor_names = names; saveBuilding(bld);
+        });
+        const camsHere = view.data.cameras.filter((c) => c.building_id === bld.id && (c.floor || 0) === i).length;
+        list.append(h("div", { class: "row" }, h("span", { class: "num faint", style: { width: "22px" } }, i), inp,
+          h("span", { class: "hint", style: { width: "70px" } }, camsHere ? `${camsHere} camera${camsHere > 1 ? "s" : ""}` : "")));
+      }
+      panels.push(h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Floors"),
+        h("button", { class: "small", onclick: () => { bld.floors += 1; bld.height_m = Math.max(bld.height_m, bld.floors * 3.2); saveBuilding(bld); map.render(); drawSide(); } }, "Add floor"),
+        bld.floors > 1 ? h("button", { class: "small", onclick: () => { bld.floors -= 1; bld.floor_names = (bld.floor_names || []).slice(0, bld.floors); saveBuilding(bld); drawSide(); } }, "Remove top floor") : null),
+        h("div", { class: "panel-body" }, list, h("p", { class: "hint", style: { margin: "8px 0 0" } }, "Put cameras on a floor by selecting the camera and choosing this building and floor."))));
+    }
+    panels.push(accessPanel(bld));
+    return panels;
+  }
+
+  function accessPanel(bld) {
+    const modeSel = h("select", { "aria-label": "Who may enter" },
+      h("option", { value: "everyone", selected: bld.access_mode === "everyone" }, "Everyone may enter"),
+      h("option", { value: "allow", selected: bld.access_mode === "allow" }, "Only the people chosen below"),
+      h("option", { value: "deny", selected: bld.access_mode === "deny" }, "Everyone except the people chosen below"));
+    const cats = h("div", { class: "chips" }, CATEGORIES.map((c) => h("label", {},
+      h("input", { type: "checkbox", value: c, checked: (bld.access_categories || []).includes(c) }), PLURAL[c])));
+    const groups = h("div", { class: "chips" }, h("span", { class: "hint" }, "Loading classes..."));
+    groupsP.then((gs) => groups.replaceChildren(...(gs.length ? gs.map((g) => h("label", {},
+      h("input", { type: "checkbox", value: g, checked: (bld.access_groups || []).includes(g) }), g)) : [h("span", { class: "hint" }, "No classes or departments yet.")])));
+    const peopleBox = h("div", { class: "chips" });
+    const drawPeople = async () => {
+      const ids = bld.access_people || [];
+      const names = await Promise.all(ids.map((id) => get(`/api/people/${id}`).then((p) => p.full_name).catch(() => `#${id}`)));
+      peopleBox.replaceChildren(...ids.map((id, i) => h("span", { class: "chip-x" }, names[i],
+        h("button", { "aria-label": `Remove ${names[i]}`, onclick: () => { bld.access_people = ids.filter((x) => x !== id); save(); drawPeople(); } }, "x"))));
+    };
+    drawPeople();
+    const search = h("input", { type: "search", placeholder: "Add a person by name or ID", "aria-label": "Add a person" });
+    const results = h("div", { class: "chips" });
+    let t;
+    search.addEventListener("input", () => {
+      clearTimeout(t);
+      t = setTimeout(async () => {
+        if (search.value.trim().length < 2) return results.replaceChildren();
+        const rows = await get(`/api/people?q=${encodeURIComponent(search.value.trim())}&limit=6`);
+        results.replaceChildren(...rows.map((p) => h("button", { class: "small", onclick: () => {
+          bld.access_people = [...new Set([...(bld.access_people || []), p.id])]; save(); drawPeople(); search.value = ""; results.replaceChildren();
+        } }, `+ ${p.full_name}`)));
+      }, 250);
+    });
+    const [from, to] = (bld.closed_hours || "").split("-");
+    const closedOn = h("input", { type: "checkbox", checked: !!bld.closed_hours });
+    const tFrom = h("input", { type: "time", value: from || "18:00", "aria-label": "Closed from" });
+    const tTo = h("input", { type: "time", value: to || "06:00", "aria-label": "Closed until" });
+    const chosen = h("div", { class: "stack" },
+      h("div", {}, h("div", { class: "hint" }, "Types of people"), cats),
+      h("div", {}, h("div", { class: "hint" }, "Classes or departments"), groups),
+      h("div", {}, h("div", { class: "hint" }, "Particular people"), peopleBox, search, results));
+    const body = h("div", { class: "stack" }, modeSel, chosen,
+      h("label", { class: "check" }, closedOn, "Closed hours: alert for anyone seen here between"),
+      h("div", { class: "row" }, tFrom, "and", tTo),
+      h("p", { class: "hint", style: { margin: 0 } }, "During closed hours only the chosen people (with \"Only the people chosen\") may be here. Unknown faces in a restricted area always cause an alert."));
+    const syncVisible = () => chosen.classList.toggle("hidden", modeSel.value === "everyone");
+    function save() {
+      bld.access_mode = modeSel.value;
+      bld.access_categories = [...cats.querySelectorAll("input:checked")].map((i) => i.value);
+      bld.access_groups = [...groups.querySelectorAll("input:checked")].map((i) => i.value);
+      bld.closed_hours = closedOn.checked ? `${tFrom.value}-${tTo.value}` : "";
+      saveBuilding(bld); map.render();
+    }
+    body.addEventListener("change", (e) => { if (e.target !== search) { syncVisible(); save(); } });
+    syncVisible();
+    return h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Who may enter")),
+      h("div", { class: "panel-body" }, body));
+  }
+
   function drawSide() {
     const d = view.data;
     const bld = selected?.kind === "building" && d.buildings.find((b) => b.id === selected.id);
@@ -546,24 +718,7 @@ async function builder(el) {
     const unplaced = d.cameras.filter((c) => c.map_x == null);
 
     const props = [];
-    if (bld) {
-      const f = h("div", { class: "stack" },
-        field("Name", h("input", { name: "name", value: bld.name })),
-        h("div", { class: "grid3" },
-          field("Type", h("select", { name: "kind" }, Object.entries(KINDS).map(([k, l]) => h("option", { value: k, selected: k === bld.kind }, l)))),
-          field("Height m", h("input", { name: "height_m", type: "number", value: bld.height_m, min: 1, step: 0.5 })),
-          field("Floors", h("input", { name: "floors", type: "number", value: bld.floors, min: 1 }))),
-        h("div", { class: "swatches", role: "group", "aria-label": "Colour" }, COLORS.map((c) => h("button", { style: { background: c }, "aria-label": c, "aria-pressed": String(c === bld.color), onclick: () => { bld.color = c; saveBuilding(bld); map.render(); drawSide(); } }))),
-      );
-      f.addEventListener("change", () => {
-        const v = formValues(f);
-        Object.assign(bld, { name: v.name, kind: v.kind, height_m: +v.height_m || 6, floors: +v.floors || 1 });
-        saveBuilding(bld); map.render();
-      });
-      props.push(h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Selected shape"),
-        h("button", { class: "small danger", onclick: async () => { await del(`/api/buildings/${bld.id}`); selected = null; map.select(null); reload(); } }, "Delete")),
-        h("div", { class: "panel-body" }, f, h("p", { class: "hint", style: { marginTop: "8px" } }, "Drag the shape to move it. Drag a corner to reshape."))));
-    }
+    if (bld) props.push(...buildingPanels(bld));
     if (cam) {
       const f = h("div", { class: "stack" },
         h("div", { class: "grid2" },
@@ -572,13 +727,17 @@ async function builder(el) {
         h("div", { class: "grid2" },
           field("In building", h("select", { name: "building_id" }, h("option", { value: "" }, "Outside"),
             d.buildings.filter((b) => b.kind === "building").map((b) => h("option", { value: b.id, selected: b.id === cam.building_id }, b.name)))),
-          field("Floor", h("input", { name: "floor", type: "number", value: cam.floor || 0, min: 0 }), "0 = ground")));
+          field("Floor", (() => {
+            const b = d.buildings.find((x) => x.id === cam.building_id && x.kind === "building");
+            return b ? h("select", { name: "floor" }, Array.from({ length: b.floors }, (_, i) => h("option", { value: i, selected: i === (cam.floor || 0) }, floorName(b, i))))
+              : h("input", { name: "floor", type: "number", value: cam.floor || 0, min: 0 });
+          })(), "0 = ground")));
       f.addEventListener("change", async () => {
         const v = formValues(f);
         const body = { direction: (+v.direction || 0) % 360, fov: +v.fov || 90, building_id: v.building_id ? +v.building_id : null, floor: +v.floor || 0 };
         Object.assign(cam, body);
         await patch(`/api/cameras/${cam.id}/place`, body).catch(fail);
-        map.render();
+        map.render(); drawSide();
       });
       props.push(h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, cam.name),
         h("button", { class: "small", onclick: async () => { await patch(`/api/cameras/${cam.id}/place`, { map_x: null, map_y: null }); selected = null; map.select(null); reload(); } }, "Remove from map")),
@@ -638,14 +797,19 @@ async function alerts(el) {
   const seg = h("div", { class: "seg" }, [["open", "Open"], ["all", "All"]].map(([v, l]) => h("button", { "aria-pressed": String(v === "open"), onclick: (e) => {
     openOnly = v === "open"; seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); load();
   } }, l)));
-  el.append(head("Alerts", "Watch-list sightings, strangers in restricted areas and cameras that stopped working.", seg,
+  el.append(head("Alerts", "Rule breaks, watch-list sightings, suspicious activity and cameras that stopped working. Always check the picture before acting.", seg,
     h("button", { onclick: async () => { await post("/api/alerts/ack-all"); load(); } }, "Mark all as seen")), list);
-  const KIND = { watchlist: ["Watch list", "amber"], unknown_restricted: ["Restricted area", "red"], camera_offline: ["Camera offline", ""] };
+  const KIND = {
+    watchlist: ["Watch list", "amber"], unknown_restricted: ["Restricted camera", "red"], access_violation: ["Not allowed here", "red"],
+    camera_offline: ["Camera offline", ""], tamper: ["Camera tampering", "red"], after_hours: ["After hours", "amber"],
+    loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"], running: ["Running", "amber"],
+  };
+  const big = (src) => dialog({ title: "Alert picture", wide: true, body: h("img", { src, alt: "Alert picture", style: { width: "100%", borderRadius: "6px" } }) });
   async function load() {
     const rows = await get(`/api/alerts?open_only=${openOnly}`);
     if (!rows.length) { list.replaceChildren(emptyState("No alerts", openOnly ? "Everything has been seen. New alerts appear here and pop up in the corner." : "Nothing has happened yet.")); return; }
-    list.replaceChildren(h("ul", { class: "feed" }, rows.map((a) => h("li", {},
-      thumb(snapUrl(a)),
+    list.replaceChildren(h("ul", { class: "feed" }, rows.map((a) => h("li", { class: a.snapshot_path?.includes("scene_") ? "scene-row" : "" },
+      a.snapshot_path?.includes("scene_") ? h("img", { class: "scene", src: snapUrl(a), alt: "Scene", onclick: () => big(snapUrl(a)) }) : thumb(snapUrl(a)),
       h("div", {}, h("div", { class: "who" }, a.message), h("div", { class: "where" }, h("span", { class: `tag ${KIND[a.kind]?.[1] || ""}` }, KIND[a.kind]?.[0] || a.kind), " ", clock(a.created_at))),
       h("div", { class: "row" },
         a.person_id ? h("button", { class: "small", onclick: () => go("find", a.person_id) }, "Track") : null,

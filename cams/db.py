@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import DEFAULT_SETTINGS
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -136,6 +136,15 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
 
+CREATE TABLE IF NOT EXISTS reference_photos (
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    angle      TEXT NOT NULL,             -- back / top / any view without a usable face
+    image_path TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_refphotos_person ON reference_photos(person_id);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -173,9 +182,39 @@ class Database:
         with self._write_lock, self.conn() as c:
             yield c
 
+    # Columns added after version 1. Old databases get them on start-up.
+    MIGRATIONS = {
+        "buildings": {
+            "rotation": "REAL NOT NULL DEFAULT 0",
+            "floor_names": "TEXT NOT NULL DEFAULT '[]'",
+            # access rules: everyone | allow (only listed) | deny (listed may not enter)
+            "access_mode": "TEXT NOT NULL DEFAULT 'everyone'",
+            "access_categories": "TEXT NOT NULL DEFAULT '[]'",
+            "access_groups": "TEXT NOT NULL DEFAULT '[]'",
+            "access_people": "TEXT NOT NULL DEFAULT '[]'",
+            "closed_hours": "TEXT NOT NULL DEFAULT ''",      # e.g. "18:00-06:00"
+        },
+        "cameras": {
+            # suspicious-activity rules for this camera (JSON)
+            "analytics": "TEXT NOT NULL DEFAULT '{}'",
+        },
+        "alerts": {
+            "snapshot_path": "TEXT",
+        },
+    }
+
+    def _migrate(self, c: sqlite3.Connection) -> None:
+        for table, cols in self.MIGRATIONS.items():
+            have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+            for col, decl in cols.items():
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        c.execute("UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(SCHEMA_VERSION),))
+
     def init(self) -> None:
         with self.write() as c:
             c.executescript(SCHEMA)
+            self._migrate(c)
             c.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', ?)",
                 (str(SCHEMA_VERSION),),

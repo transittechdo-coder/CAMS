@@ -26,7 +26,8 @@ from pydantic import BaseModel, Field
 
 from . import APP_FULL_NAME, __version__, auth
 from .cameras import RTSP_TEMPLATES, detect_kind, mask_source, scan_network, test_source
-from .face_engine import ANGLES, ModelsMissing
+from .activity import DEFAULT_ANALYTICS, parse_analytics
+from .face_engine import ALL_ANGLES, ANGLES, REFERENCE_ANGLES, ModelsMissing
 from .system import CamsSystem, snapshot_file
 
 COOKIE = "cams_session"
@@ -83,6 +84,7 @@ class CameraIn(BaseModel):
     map_y: float | None = None
     direction: float = 0
     fov: float = 90
+    analytics: dict | None = None
 
 
 class CameraPlaceIn(BaseModel):
@@ -110,6 +112,13 @@ class BuildingIn(BaseModel):
     height_m: float = 6
     floors: int = 1
     color: str = "#5b8def"
+    rotation: float = 0
+    floor_names: list[str] = []
+    access_mode: str = "everyone"
+    access_categories: list[str] = []
+    access_groups: list[str] = []
+    access_people: list[int] = []
+    closed_hours: str = ""
 
 
 class MapIn(BaseModel):
@@ -141,6 +150,7 @@ def _person_or_404(sysm: CamsSystem, pid: int) -> dict:
 def _camera_public(sysm: CamsSystem, cam: dict) -> dict:
     out = dict(cam)
     out["source_display"] = mask_source(cam["source"])
+    out["analytics"] = parse_analytics(cam.get("analytics"))
     out["live"] = sysm.camera_status(cam["id"])
     return out
 
@@ -154,6 +164,21 @@ def _last_seen(sysm: CamsSystem, pid: int) -> dict | None:
         (pid,),
     )
     return row
+
+
+def _hours_ok(spec: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"\s*([01]?\d|2[0-3]):[0-5]\d\s*-\s*([01]?\d|2[0-3]):[0-5]\d\s*", spec or ""))
+
+
+def _building_out(b: dict) -> dict:
+    out = dict(b)
+    for k in ("polygon", "floor_names", "access_categories", "access_groups", "access_people"):
+        try:
+            out[k] = json.loads(b.get(k) or "[]")
+        except ValueError:
+            out[k] = []
+    return out
 
 
 def create_app(sysm: CamsSystem) -> FastAPI:
@@ -311,7 +336,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     def list_people(q: str = "", category: str = "", group: str = "", limit: int = 500, user=viewer):
         sql = (
             "SELECT p.*, (SELECT COUNT(*) FROM face_samples f WHERE f.person_id = p.id) AS samples, "
-            "(SELECT GROUP_CONCAT(DISTINCT f.angle) FROM face_samples f WHERE f.person_id = p.id) AS angles, "
+            "(SELECT GROUP_CONCAT(angle) FROM (SELECT angle FROM face_samples WHERE person_id = p.id "
+            "UNION SELECT angle FROM reference_photos WHERE person_id = p.id)) AS angles, "
             "(SELECT MAX(last_seen) FROM sightings s WHERE s.person_id = p.id) AS last_seen "
             "FROM people p WHERE 1=1"
         )
@@ -352,6 +378,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         p = _person_or_404(sysm, pid)
         p["samples"] = db.query(
             "SELECT id, angle, quality, created_at FROM face_samples WHERE person_id = ? ORDER BY created_at", (pid,))
+        p["references"] = db.query(
+            "SELECT id, angle, created_at FROM reference_photos WHERE person_id = ? ORDER BY created_at", (pid,))
         p["last_seen"] = _last_seen(sysm, pid)
         return p
 
@@ -407,13 +435,30 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return {"added": added}
 
     # ------------------------------------------------------------ enrolment (multi-angle face capture)
+    def _save_reference(pid: int, img: np.ndarray, angle: str, user: dict) -> dict:
+        folder = paths.enrollments / str(pid)
+        folder.mkdir(parents=True, exist_ok=True)
+        h, w = img.shape[:2]
+        if max(h, w) > 1200:
+            s_ = 1200 / max(h, w)
+            img = cv2.resize(img, (int(w * s_), int(h * s_)))
+        name = f"ref_{angle}_{uuid.uuid4().hex[:8]}.jpg"
+        cv2.imwrite(str(folder / name), img, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        rid = db.execute("INSERT INTO reference_photos(person_id, angle, image_path, created_at) VALUES (?,?,?,?)",
+                         (pid, angle, f"{pid}/{name}", time.time()))
+        db.audit(user["username"], "reference_photo_add", {"person_id": pid, "angle": angle})
+        return {"id": rid, "angle": angle, "reference": True,
+                "note": "Saved as a reference picture. The back and top of the head cannot be used to recognise a person."}
+
     def _enroll_image(pid: int, img: np.ndarray, angle_hint: str | None, user: dict) -> dict:
+        if angle_hint in REFERENCE_ANGLES:
+            return _save_reference(pid, img, angle_hint, user)
         try:
             faces = sysm.analyse_image(img)
         except ModelsMissing as exc:
             raise HTTPException(503, str(exc))
         if not faces:
-            raise HTTPException(422, "No face found. Use a clear, well-lit photo with the face fully visible.")
+            raise HTTPException(422, "No face found. Use a clear, well-lit photo with the face fully visible, or mark the photo as Back or Top.")
         if len(faces) > 1:
             areas = sorted((f.box[2] * f.box[3] for f in faces), reverse=True)
             if areas[1] > areas[0] * 0.5:
@@ -439,7 +484,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         sysm.reload_gallery()
         db.audit(user["username"], "face_enrol", {"person_id": pid, "angle": angle})
         return {
-            "id": sid, "angle": angle, "detected_angle": face.angle, "quality": face.quality,
+            "id": sid, "angle": angle, "detected_angle": face.angle, "quality": face.quality, "reference": False,
             "yaw": round(face.yaw, 2), "pitch": round(face.pitch, 2), "warning": warning,
         }
 
@@ -465,6 +510,78 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         if frame is None:
             raise HTTPException(409, "That camera has no picture right now.")
         return _enroll_image(pid, frame, angle or None, user)
+
+    @app.post("/api/people/{pid}/samples/video")
+    async def enroll_video(pid: int, file: UploadFile = File(...), user=operator):
+        """360-degree enrolment from a short turn-around video: keeps the best frame per angle."""
+        _person_or_404(sysm, pid)
+        data = await file.read()
+        if len(data) > 200 * 1024 * 1024:
+            raise HTTPException(413, "Video is too large (max 200 MB). Record 10-20 seconds.")
+        tmp = paths.data / f"upload_{uuid.uuid4().hex}{Path(file.filename or 'v.mp4').suffix[:6]}"
+        tmp.write_bytes(data)
+        best: dict[str, tuple[float, np.ndarray]] = {}
+        no_face: list[tuple[float, int, np.ndarray]] = []
+        seen_face_before = False
+        frames = 0
+        try:
+            cap = cv2.VideoCapture(str(tmp))
+            if not cap.isOpened():
+                raise HTTPException(400, "This video format cannot be read. Use MP4 or AVI.")
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25
+            step = max(1, int(fps / 5))
+            idx = 0
+            while frames < 600:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                idx += 1
+                if idx % step:
+                    continue
+                frames += 1
+                try:
+                    faces = sysm.analyse_image(frame)
+                except ModelsMissing as exc:
+                    raise HTTPException(503, str(exc))
+                if len(faces) == 1:
+                    f = faces[0]
+                    seen_face_before = True
+                    if f.quality > best.get(f.angle, (0,))[0]:
+                        best[f.angle] = (f.quality, frame)
+                elif not faces and seen_face_before:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    no_face.append((cv2.Laplacian(gray, cv2.CV_64F).var(), idx, frame))
+            cap.release()
+        finally:
+            tmp.unlink(missing_ok=True)
+        if not best:
+            raise HTTPException(422, "No face was found in the video. Film the person slowly turning around in good light.")
+        added = []
+        for angle, (_, frame) in best.items():
+            try:
+                added.append(_enroll_image(pid, frame, angle, user))
+            except HTTPException:
+                pass
+        if len(no_face) >= 3 and ("right" in best or "left" in best):
+            # the person turned their back to the camera: keep the sharpest of those frames
+            no_face.sort(key=lambda t: t[0], reverse=True)
+            added.append(_save_reference(pid, no_face[0][2], "back", user))
+        return {"added": added, "frames_checked": frames,
+                "missing": [a for a in ANGLES if a not in best]}
+
+    @app.get("/api/references/{rid}/image")
+    def reference_image(rid: int, user=viewer):
+        r = db.one("SELECT image_path FROM reference_photos WHERE id = ?", (rid,))
+        return FileResponse(_enrol_file(r and r["image_path"]))
+
+    @app.delete("/api/references/{rid}")
+    def delete_reference(rid: int, user=operator):
+        r = db.one("SELECT * FROM reference_photos WHERE id = ?", (rid,))
+        if not r:
+            raise HTTPException(404, "Not found.")
+        (paths.enrollments / r["image_path"]).unlink(missing_ok=True)
+        db.execute("DELETE FROM reference_photos WHERE id = ?", (rid,))
+        return {"ok": True}
 
     @app.post("/api/faces/check")
     async def check_face(file: UploadFile = File(...), user=operator):
@@ -600,18 +717,20 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     def _cam_values(body: CameraIn):
         kind = body.kind or detect_kind(body.source)
+        analytics = json.dumps(parse_analytics(body.analytics))
         if kind not in ("usb", "rtsp", "http", "file"):
             raise HTTPException(400, "Unknown camera type.")
         return (body.name.strip(), body.source.strip(), kind, int(body.enabled), int(body.restricted),
-                body.building_id, body.floor, body.map_x, body.map_y, body.direction % 360, body.fov)
+                body.building_id, body.floor, body.map_x, body.map_y, body.direction % 360, body.fov, analytics)
 
     @app.post("/api/cameras")
     def add_camera(body: CameraIn, user=operator):
         cid = db.execute(
             "INSERT INTO cameras(name, source, kind, enabled, restricted, building_id, floor, map_x, map_y, direction, "
-            "fov, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fov, analytics, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             _cam_values(body) + (time.time(),),
         )
+        sysm.refresh_areas()
         sysm.restart_camera(cid)
         db.audit(user["username"], "camera_add", {"id": cid, "name": body.name})
         return {"id": cid}
@@ -627,9 +746,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             values = (values[0], old["source"]) + values[2:]
         db.execute(
             "UPDATE cameras SET name=?, source=?, kind=?, enabled=?, restricted=?, building_id=?, floor=?, map_x=?, "
-            "map_y=?, direction=?, fov=? WHERE id=?",
+            "map_y=?, direction=?, fov=?, analytics=? WHERE id=?",
             values + (cid,),
         )
+        sysm.refresh_areas()
         sysm.restart_camera(cid)
         db.audit(user["username"], "camera_update", {"id": cid})
         return {"ok": True}
@@ -642,7 +762,23 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         if fields:
             sets = ", ".join(f"{k} = ?" for k in fields)
             db.execute(f"UPDATE cameras SET {sets} WHERE id = ?", list(fields.values()) + [cid])
+            sysm.refresh_areas()
         return {"ok": True}
+
+    @app.put("/api/cameras/{cid}/analytics")
+    def set_analytics(cid: int, body: dict, user=operator):
+        if not db.one("SELECT id FROM cameras WHERE id = ?", (cid,)):
+            raise HTTPException(404, "Camera not found.")
+        if body.get("after_hours") and not _hours_ok(body["after_hours"]):
+            raise HTTPException(400, "Closed hours must look like 18:00-06:00.")
+        db.execute("UPDATE cameras SET analytics = ? WHERE id = ?", (json.dumps(parse_analytics(body)), cid))
+        sysm.refresh_areas()
+        db.audit(user["username"], "camera_analytics", {"id": cid, **parse_analytics(body)})
+        return {"ok": True}
+
+    @app.get("/api/analytics/defaults")
+    def analytics_defaults(user=viewer):
+        return {"defaults": DEFAULT_ANALYTICS, "available": sysm.activity_ok}
 
     @app.delete("/api/cameras/{cid}")
     def delete_camera(cid: int, user=operator):
@@ -701,10 +837,11 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             "image": f"/api/map/image?v={s.get('map_image_v', '0')}" if img else None,
             "width_m": float(s.get("map_width_m", 200)),
             "height_m": float(s.get("map_height_m", 150)),
-            "buildings": [dict(b, polygon=json.loads(b["polygon"])) for b in db.query("SELECT * FROM buildings ORDER BY id")],
+            "buildings": [_building_out(b) for b in db.query("SELECT * FROM buildings ORDER BY id")],
             "cameras": [
                 {k: c[k] for k in ("id", "name", "map_x", "map_y", "direction", "fov", "floor", "building_id",
-                                   "restricted", "enabled")} | {"live": sysm.camera_status(c["id"])}
+                                   "restricted", "enabled")}
+                | {"live": sysm.camera_status(c["id"]), "analytics": parse_analytics(c["analytics"])}
                 for c in db.query("SELECT * FROM cameras ORDER BY name")
             ],
         }
@@ -745,34 +882,58 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             raise HTTPException(400, "A shape needs at least 3 corner points.")
         if body.kind not in ("building", "zone", "gate", "field", "parking"):
             raise HTTPException(400, "Unknown shape type.")
+        if body.access_mode not in ("everyone", "allow", "deny"):
+            raise HTTPException(400, "Access must be everyone, allow or deny.")
+        if body.closed_hours and not _hours_ok(body.closed_hours):
+            raise HTTPException(400, "Closed hours must look like 18:00-06:00.")
+
+    def _building_values(body: BuildingIn):
+        floors = max(1, min(body.floors, 200))
+        names = [n.strip()[:40] for n in body.floor_names][:floors]
+        return (body.name, body.kind, json.dumps(body.polygon), body.height_m, floors, body.color,
+                body.rotation % 360, json.dumps(names), body.access_mode, json.dumps(body.access_categories),
+                json.dumps(body.access_groups), json.dumps([int(x) for x in body.access_people]),
+                body.closed_hours.strip())
 
     @app.post("/api/buildings")
     def add_building(body: BuildingIn, user=operator):
         _check_building(body)
         bid = db.execute(
-            "INSERT INTO buildings(name, kind, polygon, height_m, floors, color) VALUES (?,?,?,?,?,?)",
-            (body.name, body.kind, json.dumps(body.polygon), body.height_m, max(1, body.floors), body.color),
+            "INSERT INTO buildings(name, kind, polygon, height_m, floors, color, rotation, floor_names, access_mode, "
+            "access_categories, access_groups, access_people, closed_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            _building_values(body),
         )
+        sysm.refresh_areas()
+        db.audit(user["username"], "area_add", {"id": bid, "name": body.name})
         return {"id": bid}
 
     @app.put("/api/buildings/{bid}")
     def update_building(bid: int, body: BuildingIn, user=operator):
         _check_building(body)
+        old = db.one("SELECT access_mode, access_categories, access_groups, access_people, closed_hours FROM buildings WHERE id = ?", (bid,))
         db.execute(
-            "UPDATE buildings SET name=?, kind=?, polygon=?, height_m=?, floors=?, color=? WHERE id=?",
-            (body.name, body.kind, json.dumps(body.polygon), body.height_m, max(1, body.floors), body.color, bid),
+            "UPDATE buildings SET name=?, kind=?, polygon=?, height_m=?, floors=?, color=?, rotation=?, floor_names=?, "
+            "access_mode=?, access_categories=?, access_groups=?, access_people=?, closed_hours=? WHERE id=?",
+            _building_values(body) + (bid,),
         )
+        sysm.refresh_areas()
+        new = db.one("SELECT access_mode, access_categories, access_groups, access_people, closed_hours FROM buildings WHERE id = ?", (bid,))
+        if old != new:
+            db.audit(user["username"], "area_rules", {"id": bid, "name": body.name, **(new or {})})
         return {"ok": True}
 
     @app.delete("/api/buildings/{bid}")
     def delete_building(bid: int, user=operator):
         db.execute("DELETE FROM buildings WHERE id = ?", (bid,))
+        sysm.refresh_areas()
         return {"ok": True}
 
     # ------------------------------------------------------------ alerts
     @app.get("/api/alerts")
     def alerts(open_only: bool = True, limit: int = 100, user=viewer):
-        sql = ("SELECT a.*, s.snapshot_path, p.full_name FROM alerts a LEFT JOIN sightings s ON s.id = a.sighting_id "
+        sql = ("SELECT a.*, COALESCE(a.snapshot_path, s.snapshot_path) AS snapshot_path, p.full_name, "
+               "c.name AS camera_name FROM alerts a LEFT JOIN sightings s ON s.id = a.sighting_id "
+               "LEFT JOIN cameras c ON c.id = a.camera_id "
                "LEFT JOIN people p ON p.id = a.person_id")
         if open_only:
             sql += " WHERE a.acknowledged = 0"

@@ -1,4 +1,4 @@
-"""Download the two face AI models CAMS needs (about 39 MB, once).
+"""Download the AI models CAMS needs: face detection, face recognition and person detection (about 43 MB, once).
 
     python scripts/download_models.py
 
@@ -22,6 +22,11 @@ MODELS = {
     "face_recognition_sface_2021dec.onnx": (
         f"{BASE}/face_recognition_sface/face_recognition_sface_2021dec.onnx",
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    ),
+    # person detection for suspicious-activity rules (NanoDet-Plus, COCO)
+    "object_detection_nanodet_2022nov.onnx": (
+        f"{BASE}/object_detection_nanodet/object_detection_nanodet_2022nov.onnx",
+        "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186",
     ),
 }
 

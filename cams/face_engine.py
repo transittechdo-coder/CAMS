@@ -26,7 +26,11 @@ SFACE_FILE = "face_recognition_sface_2021dec.onnx"
 MAX_DETECT_WIDTH = 960
 MIN_FACE_PX = 28
 
-ANGLES = ("front", "left", "right", "up", "down")
+# Face-visible views used for recognition, in capture order.
+ANGLES = ("front", "three_quarter_left", "left", "three_quarter_right", "right", "up", "down")
+# Views without a usable face: kept as reference pictures for people to compare by eye.
+REFERENCE_ANGLES = ("back", "top")
+ALL_ANGLES = ANGLES + REFERENCE_ANGLES
 
 
 class ModelsMissing(RuntimeError):
@@ -137,10 +141,14 @@ def estimate_pose(lm: np.ndarray) -> tuple[float, float]:
 
 def classify_angle(yaw: float, pitch: float) -> str:
     if abs(yaw) >= abs(pitch):
-        if yaw > 0.35:
+        if yaw > 0.6:
             return "left"
-        if yaw < -0.35:
+        if yaw > 0.25:
+            return "three_quarter_left"
+        if yaw < -0.6:
             return "right"
+        if yaw < -0.25:
+            return "three_quarter_right"
     else:
         if pitch > 0.35:
             return "down"

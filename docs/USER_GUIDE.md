@@ -36,6 +36,19 @@ Common addresses (replace USER, PASSWORD, IP):
 | TP-Link Tapo / VIGI | `rtsp://USER:PASSWORD@IP:554/stream1` |
 | Reolink | `rtsp://USER:PASSWORD@IP:554/h264Preview_01_main` |
 
+### Activity rules (suspicious activity)
+
+Press **Activity rules** on a camera. CAMS runs a person-detection AI on this PC and can alert you when:
+
+- someone **stays** in view longer than the minutes you set (loitering);
+- **N or more people gather** for at least 10 seconds (crowd);
+- someone is **running** (much faster than walking);
+- **anyone** is seen during the hours you set (closed hours);
+- the camera is **covered, blurred or turned away** (tampering).
+
+Each alert comes with a picture of the scene. These rules point out situations for a guard to
+look at. They cannot tell what a person intends, so always check before acting.
+
 Tip: cameras for recognition work best at head height (2-3 m), pointing at doorways and gates where
 people walk *towards* the camera.
 
@@ -52,7 +65,24 @@ Open **Campus builder**.
 4. Under **Cameras**, choose a camera that is not on the map yet, then click where it is mounted.
 5. Drag the **amber handle** so the cone points the way the camera looks. You can also set the
    building and floor it is on.
-6. Press **3D** (top right of the map) to see the campus in 3D.
+6. **Arrange** a selected building with **Turn left**, **Turn right**, **90°** and **Duplicate**,
+   or drag it. Under **Floors**, press **Add floor** and give each floor a name (Ground floor,
+   Reading room, ...). Cameras can then be placed on a named floor.
+7. Press **3D** (top right of the map) to see the campus in 3D, with floor lines on each building.
+
+### Restricted areas (who may enter)
+
+Select a building or zone and use **Who may enter**:
+
+- **Everyone may enter** (no rule), **Only the people chosen below**, or
+  **Everyone except the people chosen below**.
+- Choose people by **type** (students, staff, visitors...), by **class or department**, or by **name**.
+- Tick **Closed hours** to be alerted about anyone seen there between two times (for example
+  18:00 to 06:00). With *Only the people chosen*, those people may still be there after hours.
+
+Areas with rules have a red dashed outline. When a camera in that area sees someone who is not
+allowed, an alert appears with their name and picture. Unknown faces in a restricted area always
+cause an alert.
 
 ## 4. Add people and capture their faces
 
@@ -65,16 +95,21 @@ Open **People**.
   parent or guardian gives consent.
 - **Watch list:** CAMS alerts you every time this person is seen.
 
-Then press **Capture face**:
+Then press **Capture face** for a **360° set** of nine views: front, half left, left side,
+half right, right side, up, down, back and top.
 
-- **This PC's webcam:** the person sits in front of the webcam. CAMS asks them to look straight,
-  left, right, up and down, and takes each picture by itself when the pose is right.
+- **This PC's webcam:** CAMS tells the person which way to turn and takes each face picture by
+  itself when the pose is right. Back and top are taken with the button.
 - **A CAMS camera:** choose a camera, ask the person to stand close and follow the instruction,
-  then press **Take picture now** for each angle.
-- **Upload photos instead:** clear photos with only this person's face.
+  then press **Take picture now** for each view.
+- **Upload photos:** choose which side the photos show (or let CAMS detect it), then pick the files.
+- **Upload turn-around video:** film the person slowly turning all the way around for 10-20
+  seconds. CAMS picks the best picture for each angle, including the back.
 
-More angles give better recognition on cameras mounted high or to the side. The squares in the
-People list show which angles each person has.
+The seven face views are used for recognition; more of them means better results on cameras
+mounted high or to the side. The **back and top cannot identify anyone** (no face is visible), so
+CAMS keeps them as reference pictures for guards to compare by eye. The squares in the People
+list show which of the nine views each person has.
 
 ## 5. Find a person
 

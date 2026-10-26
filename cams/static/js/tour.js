@@ -8,6 +8,7 @@ export const GUIDE = [
       "Open Cameras and press Add camera. Use Help me build the address: choose the brand (Hikvision, Dahua and others), type the camera's IP address, username and password. Press Test connection to see a picture.",
       "Not sure of the IP? Press Find on network and CAMS lists the cameras it can see. USB webcams use the address 0, 1, 2. Cameras connected to an NVR use the NVR's IP with the channel number.",
       "Tick Restricted area for places like the staff room or server room, so CAMS alerts you about anyone it does not know.",
+      "Press Activity rules on a camera to switch on suspicious-activity alerts: loitering, crowds gathering, running, people present during closed hours, and camera tampering (covered, blurred or turned away). These use a person-detection AI that runs on this PC; they point out situations for a guard to check.",
     ],
   },
   {
@@ -15,14 +16,17 @@ export const GUIDE = [
     text: [
       "In the Campus builder, add a picture of your compound if you have one (a plan or a satellite screenshot) and type its real width and depth in metres.",
       "Draw each building, gate, field and parking area with the rectangle or shape tool. Give buildings their height and number of floors to see them in 3D.",
+      "Arrange buildings with Turn left / Turn right / Duplicate, name every floor, and put each camera on its building and floor.",
       "Then click each camera in the list and click where it is mounted. Drag the amber handle so the cone points where the camera looks.",
+      "Under Who may enter, set rules for any building or zone: only staff, everyone except Form 1, particular people, and closed hours. Areas with rules have a red dashed outline. CAMS alerts you when someone is seen where they are not allowed.",
     ],
   },
   {
     title: "Add people and capture their faces", page: "people", button: "Open People",
     text: [
       "Add people one at a time, or import your class list as a CSV file with the columns full_name, person_code, category and group_name.",
-      "Open a person and press Capture face. Using this PC's webcam, CAMS asks the person to look straight, left, right, up and down and takes each picture automatically when the pose is right. You can also capture from any CAMS camera, or upload photos.",
+      "Open a person and press Capture face for a 360° set: front, half left, left side, half right, right side, up, down, back and top. With this PC's webcam CAMS takes each face picture automatically when the pose is right; back and top are taken by hand. You can also use any CAMS camera, upload photos (choose which side they show), or upload a 10-20 second video of the person turning around and CAMS picks the best picture for each angle.",
+      "The seven face views are used for recognition. The back and top of the head cannot identify anyone, so they are kept only for guards to compare by eye.",
       "Record consent before enrolling. For students under 18, consent comes from a parent or guardian.",
     ],
   },

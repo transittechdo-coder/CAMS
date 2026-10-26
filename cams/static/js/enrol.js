@@ -1,14 +1,21 @@
-// Face enrolment: capture a person from five angles (front, left, right, up, down)
-// so CAMS can recognise them from any camera position.
+// 360-degree enrolment: seven face angles used for recognition, plus back and top
+// of the head kept as reference pictures for guards. Webcam (automatic), any CAMS
+// camera, photos, or a short turn-around video.
 import { h, get, upload, post, dialog, toast, fail, POSE_ICON } from "./util.js";
+const poseIcon = (id) => POSE_ICON[id] || POSE_ICON[id.includes("left") ? "left" : id.includes("right") ? "right" : id === "back" || id === "top" ? "up" : "front"];
 
-const POSES = [
-  { id: "front", say: "Look straight at the camera" },
-  { id: "left", say: "Turn your head slowly to your left" },
-  { id: "right", say: "Turn your head slowly to your right" },
-  { id: "up", say: "Lift your chin and look up a little" },
-  { id: "down", say: "Lower your chin and look down a little" },
+export const POSES = [
+  { id: "front", label: "Front", say: "Look straight at the camera" },
+  { id: "three_quarter_left", label: "Half left", say: "Turn your head a little to your left" },
+  { id: "left", label: "Left side", say: "Turn your head fully to your left" },
+  { id: "three_quarter_right", label: "Half right", say: "Turn your head a little to your right" },
+  { id: "right", label: "Right side", say: "Turn your head fully to your right" },
+  { id: "up", label: "Up", say: "Lift your chin and look up a little" },
+  { id: "down", label: "Down", say: "Lower your chin and look down a little" },
+  { id: "back", label: "Back", say: "Turn around so your back faces the camera", ref: true },
+  { id: "top", label: "Top", say: "Bow your head so the top faces the camera", ref: true },
 ];
+export const POSE_LABEL = Object.fromEntries(POSES.map((p) => [p.id, p.label]));
 
 export function openEnrol(person, onDone) {
   let stream = null, timer = null, closed = false, source = "webcam";
@@ -30,11 +37,12 @@ export function openEnrol(person, onDone) {
 
   function drawPoses() {
     poseList.replaceChildren(...POSES.map((p, i) => h("li", { class: done.has(p.id) ? "done" : i === current ? "current" : "" },
-      done.has(p.id) ? h("img", { src: done.get(p.id), alt: "" }) : h("span", { class: "ph", html: POSE_ICON[p.id] }),
-      h("div", {}, h("b", {}, p.id[0].toUpperCase() + p.id.slice(1)), h("div", { class: "hint" }, done.has(p.id) ? "Saved" : p.say)),
+      done.has(p.id) ? h("img", { src: done.get(p.id), alt: "" }) : h("span", { class: "ph", html: poseIcon(p.id) }),
+      h("div", {}, h("b", {}, p.label), h("div", { class: "hint" }, done.has(p.id) ? "Saved" : p.ref ? "Reference picture" : p.say)),
     )));
     const pose = POSES[current];
     prompt.textContent = pose ? pose.say : "All angles saved";
+    captureBtn.textContent = pose && pose.ref ? `Take ${pose.label.toLowerCase()} picture` : "Take picture now";
   }
 
   async function startWebcam() {
@@ -78,7 +86,10 @@ export function openEnrol(person, onDone) {
 
   let busy = false;
   async function check() {
-    if (busy || closed || current >= POSES.length) return;
+    if (busy || closed || current >= POSES.length || POSES[current].ref) {
+      if (POSES[current]?.ref) { oval.classList.remove("good"); statusLine.textContent = "Back and top pictures are taken by hand: press the button when the person is in position."; }
+      return;
+    }
     busy = true;
     try {
       const blob = await grab();
@@ -112,22 +123,43 @@ export function openEnrol(person, onDone) {
         res = (await upload(`/api/people/${person.id}/samples`, fd)).added[0];
       }
       if (res.warning) toast(res.warning, "alert");
-      done.set(pose, `/api/samples/${res.id}/image?t=${Date.now()}`);
+      done.set(pose, res.reference ? `/api/references/${res.id}/image` : `/api/samples/${res.id}/image?t=${Date.now()}`);
       current = POSES.findIndex((p) => !done.has(p.id));
       if (current < 0) current = POSES.length;
       drawPoses();
-      if (current >= POSES.length) { statusLine.textContent = "All five angles are saved. You can close this window."; stopAll(); }
+      if (current >= POSES.length) { statusLine.textContent = "All 360° angles are saved. You can close this window."; stopAll(); }
     } catch (e) { if (manual) fail(e); else statusLine.textContent = e.message; }
     finally { captureBtn.disabled = false; }
   }
+
+  const videoInput = h("input", { type: "file", accept: "video/*", class: "hidden" });
+  videoInput.addEventListener("change", async () => {
+    const f = videoInput.files[0];
+    if (!f) return;
+    statusLine.textContent = "Reading the video and picking the best picture for each angle. This can take a minute...";
+    const fd = new FormData(); fd.append("file", f);
+    try {
+      const r = await upload(`/api/people/${person.id}/samples/video`, fd);
+      for (const a of r.added) done.set(a.angle, a.reference ? `/api/references/${a.id}/image` : `/api/samples/${a.id}/image`);
+      current = POSES.findIndex((p) => !done.has(p.id));
+      if (current < 0) current = POSES.length;
+      drawPoses();
+      statusLine.textContent = `${r.added.length} angles taken from the video.` + (r.missing.length ? ` Still missing: ${r.missing.map((m) => POSE_LABEL[m]).join(", ")}.` : "");
+    } catch (e) { fail(e); statusLine.textContent = ""; }
+    videoInput.value = "";
+  });
+  const angleSel = h("select", { "aria-label": "Which side do the photos show?" },
+    h("option", { value: "" }, "Photos: detect angle automatically"),
+    POSES.map((p) => h("option", { value: p.id }, `Photos show: ${p.label}`)));
 
   fileInput.addEventListener("change", async () => {
     if (!fileInput.files.length) return;
     const fd = new FormData();
     [...fileInput.files].forEach((f) => fd.append("files", f));
+    if (angleSel.value) fd.append("angle", angleSel.value);
     try {
       const r = await upload(`/api/people/${person.id}/samples`, fd);
-      for (const a of r.added) { done.set(a.angle, `/api/samples/${a.id}/image`); if (a.warning) toast(a.warning, "alert"); }
+      for (const a of r.added) { done.set(a.angle, a.reference ? `/api/references/${a.id}/image` : `/api/samples/${a.id}/image`); if (a.warning) toast(a.warning, "alert"); }
       r.errors.forEach((e) => toast(`${e.file}: ${e.error}`, "error"));
       current = Math.max(0, POSES.findIndex((p) => !done.has(p.id)));
       if (done.size >= POSES.length) current = POSES.length;
@@ -149,12 +181,14 @@ export function openEnrol(person, onDone) {
     title: `Capture face: ${person.full_name}`,
     wide: true,
     body: h("div", { class: "stack" },
-      h("div", { class: "row" }, sourceSeg, camSelect, h("button", { onclick: () => fileInput.click() }, "Upload photos instead"), fileInput),
+      h("div", { class: "row" }, sourceSeg, camSelect),
+      h("div", { class: "row" }, angleSel, h("button", { onclick: () => fileInput.click() }, "Upload photos"), fileInput,
+        h("button", { onclick: () => videoInput.click(), title: "Film the person slowly turning all the way around, 10-20 seconds" }, "Upload turn-around video"), videoInput),
       h("div", { class: "enrol" },
         h("div", { class: "stack" }, viewer, statusLine, h("div", { class: "row" }, captureBtn,
           h("button", { onclick: () => { current = (current + 1) % POSES.length; drawPoses(); } }, "Skip this angle"))),
-        h("div", {}, h("h3", { style: { marginBottom: "8px" } }, "Five angles"), poseList,
-          h("p", { class: "hint", style: { marginTop: "8px" } }, "More angles = better recognition on high or side-mounted cameras. Front alone also works.")),
+        h("div", {}, h("h3", { style: { marginBottom: "8px" } }, "360° views"), poseList,
+          h("p", { class: "hint", style: { marginTop: "8px" } }, "Face views are used for recognition: more angles = better results on high or side cameras. Back and top cannot identify a person; they are kept so guards can compare by eye.")),
       ),
     ),
     actions: [{ label: "Done", class: "primary" }],

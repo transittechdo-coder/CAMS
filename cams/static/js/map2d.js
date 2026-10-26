@@ -103,7 +103,7 @@ export class SiteMap {
     for (const b of d.buildings) {
       const sel = this.selected?.kind === "building" && this.selected.id === b.id;
       const poly = s("polygon", {
-        class: `bld ${b.kind}${sel ? " sel" : ""}`, fill: b.color,
+        class: `bld ${b.kind}${sel ? " sel" : ""}${(b.access_mode && b.access_mode !== "everyone") || b.closed_hours ? " ruled" : ""}`, fill: b.color,
         points: b.polygon.map((p) => p.join(",")).join(" "), "data-bid": b.id,
       });
       poly.style.cursor = this.editable && this.mode === "select" ? "pointer" : "";

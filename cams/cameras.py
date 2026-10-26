@@ -107,6 +107,7 @@ class CameraState:
     offline_alerted: bool = False
     # Latest analysis result, drawn on the live view.
     overlays: list[dict] = field(default_factory=list)
+    people: list[list[int]] = field(default_factory=list)   # person-detector boxes
     overlays_at: float = 0.0
 
 

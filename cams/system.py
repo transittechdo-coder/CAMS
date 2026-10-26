@@ -21,6 +21,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+import json
+
+from .activity import ActivityMonitor, PersonDetector, in_hours, parse_analytics
 from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
@@ -54,7 +57,11 @@ class CamsSystem:
         self._settings_at = 0.0
         self._api_engine: FaceEngine | None = None
         self._api_lock = threading.Lock()
-        self.stats = {"frames_analysed": 0, "faces_seen": 0, "started_at": time.time()}
+        self.stats = {"frames_analysed": 0, "faces_seen": 0, "people_detected": 0, "started_at": time.time()}
+        self.activity_ok = PersonDetector.available(paths.models)
+        self.monitors: dict[int, ActivityMonitor] = {}
+        self.camera_areas: dict[int, list[dict]] = {}
+        self.camera_rules: dict[int, dict] = {}
         self.reload_gallery()
         self._start_cameras = start_cameras
 
@@ -71,6 +78,7 @@ class CamsSystem:
         t = threading.Thread(target=self._maintenance_loop, name="maintenance", daemon=True)
         t.start()
         self._threads.append(t)
+        self.refresh_areas()
         if self._start_cameras:
             for cam in self.db.query("SELECT * FROM cameras WHERE enabled = 1"):
                 self.start_camera(cam)
@@ -130,6 +138,49 @@ class CamsSystem:
         with self._api_lock:
             return self.api_engine().analyse(img)
 
+    # ================================================================ areas and rules
+    def refresh_areas(self) -> None:
+        """Work out which buildings/zones (with their access rules) each camera watches."""
+        areas = []
+        for b in self.db.query("SELECT * FROM buildings"):
+            b = dict(b)
+            for k in ("polygon", "access_categories", "access_groups", "access_people", "floor_names"):
+                try:
+                    b[k] = json.loads(b.get(k) or "[]")
+                except ValueError:
+                    b[k] = []
+            areas.append(b)
+        cam_areas, cam_rules = {}, {}
+        for c in self.db.query("SELECT * FROM cameras"):
+            found = []
+            for a in areas:
+                inside = c["building_id"] == a["id"] or (
+                    c["map_x"] is not None and a["kind"] != "building"
+                    and point_in_polygon(c["map_x"], c["map_y"], a["polygon"]))
+                if inside:
+                    found.append(a)
+            cam_areas[c["id"]] = found
+            cam_rules[c["id"]] = parse_analytics(c.get("analytics"))
+        self.camera_areas, self.camera_rules = cam_areas, cam_rules
+
+    def access_problem(self, cam_id: int, person: dict | None, now=None) -> str | None:
+        """Explain why this person should not be here right now, or None if allowed."""
+        for a in self.camera_areas.get(cam_id, []):
+            mode = a.get("access_mode") or "everyone"
+            listed = bool(person) and (
+                person.get("category") in a["access_categories"]
+                or (person.get("group_name") or "") in a["access_groups"]
+                or person.get("id") in a["access_people"])
+            closed = in_hours(a.get("closed_hours") or "", now)
+            who = person["full_name"] if person else "Unknown person"
+            if mode == "allow" and not listed:
+                return f"{who} is in {a['name']}, which is restricted"
+            if mode == "deny" and listed:
+                return f"{who} is in {a['name']}, where they are not allowed"
+            if closed and not (mode == "allow" and listed):
+                return f"{who} is in {a['name']} during closed hours ({a['closed_hours']})"
+        return None
+
     # ================================================================ cameras
     def start_camera(self, cam: dict) -> None:
         with self._cam_lock:
@@ -188,6 +239,13 @@ class CamsSystem:
         except Exception as exc:  # pragma: no cover - models checked earlier
             log.error("Cannot start recognition worker: %s", exc)
             return
+        detector = None
+        if self.activity_ok:
+            try:
+                detector = PersonDetector(self.paths.models)
+            except Exception as exc:
+                log.warning("Person detector unavailable: %s", exc)
+        engine.person_detector = detector
         while not self._stop.is_set():
             try:
                 worker, frame, ts = self._queue.get(timeout=0.5)
@@ -203,6 +261,15 @@ class CamsSystem:
     def process_frame(self, engine: FaceEngine, worker: CameraWorker, frame: np.ndarray, ts: float) -> list[dict]:
         threshold = self.fsetting("match_threshold", 0.40)
         faces = engine.analyse(frame)
+        rules = self.camera_rules.get(worker.id) or parse_analytics(None)
+        detector = getattr(engine, "person_detector", None)
+        people = detector.detect(frame) if detector and rules.get("people", True) else []
+        self.stats["people_detected"] += len(people)
+        mon = self.monitors.setdefault(worker.id, ActivityMonitor())
+        closed = next((a["closed_hours"] for a in self.camera_areas.get(worker.id, []) if a.get("closed_hours")), "")
+        for kind, msg in mon.analyse(frame, ts, people, rules, closed, worker.state.name):
+            snap = self._save_frame(frame, faces)
+            self._alert(kind, msg, None, worker.id, None, snap)
         overlays = []
         for f in faces:
             pid, sim = self.gallery.match(f.embedding, threshold)
@@ -217,6 +284,7 @@ class CamsSystem:
             })
             self._record(worker, frame, f, ts)
         worker.state.overlays = overlays
+        worker.state.people = [list(p[:4]) for p in people]
         worker.state.overlays_at = time.time()
         self.stats["frames_analysed"] += 1
         self.stats["faces_seen"] += len(faces)
@@ -238,8 +306,10 @@ class CamsSystem:
     def _record(self, worker: CameraWorker, frame: np.ndarray, face, ts: float) -> None:
         cam_id = worker.id
         known = face.person_id is not None
-        if not known and not worker.restricted:
-            return  # strangers are only logged on cameras marked "restricted"
+        person = self.names.get(face.person_id) if known else None
+        problem = self.access_problem(cam_id, person)
+        if not known and not worker.restricted and not problem:
+            return  # strangers are only logged on restricted cameras / rule areas
         merge = self.fsetting("sighting_merge_seconds", 20)
         key = (cam_id, face.person_id) if known else (cam_id, "u:" + self._unknown_key(cam_id, face.embedding, ts))
         with self._rec_lock:
@@ -263,10 +333,11 @@ class CamsSystem:
             if len(self._active) > 5000:
                 cutoff = ts - merge
                 self._active = {k: v for k, v in self._active.items() if v["last_seen"] >= cutoff}
-        person = self.names.get(face.person_id) if known else None
+        if problem:
+            self._alert("access_violation", f"{problem} (camera {worker.state.name})", face.person_id, cam_id, sid)
         if person and person["alert_on_sight"]:
             self._alert("watchlist", f"{person['full_name']} seen on {worker.state.name}", face.person_id, cam_id, sid)
-        elif not known:
+        elif not known and worker.restricted and not problem:
             self._alert("unknown_restricted", f"Unknown person on restricted camera {worker.state.name}", None, cam_id, sid)
 
     def _save_snapshot(self, frame: np.ndarray, face, known: bool) -> str | None:
@@ -283,11 +354,29 @@ class CamsSystem:
         cv2.imwrite(str(folder / name), crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return f"{day}/{name}"
 
-    def _alert(self, kind: str, message: str, person_id, camera_id, sighting_id) -> None:
+    def _alert(self, kind: str, message: str, person_id, camera_id, sighting_id, snapshot: str | None = None) -> None:
         self.db.execute(
-            "INSERT INTO alerts(created_at, kind, message, person_id, camera_id, sighting_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (time.time(), kind, message, person_id, camera_id, sighting_id),
+            "INSERT INTO alerts(created_at, kind, message, person_id, camera_id, sighting_id, snapshot_path) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (time.time(), kind, message, person_id, camera_id, sighting_id, snapshot),
         )
+
+    def _save_frame(self, frame: np.ndarray, faces) -> str | None:
+        """Whole-scene picture for an activity alert, with strangers' faces blurred."""
+        img = frame.copy()
+        if self.setting("blur_unknown") == "1":
+            for f in faces:
+                if f.person_id is None:
+                    blur_region(img, f.box)
+        h, w = img.shape[:2]
+        if w > 960:
+            img = cv2.resize(img, (960, int(h * 960 / w)))
+        day = time.strftime("%Y%m%d", time.localtime())
+        folder = self.paths.snapshots / day
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"scene_{uuid.uuid4().hex}.jpg"
+        cv2.imwrite(str(folder / name), img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return f"{day}/{name}"
 
     # ================================================================ live view
     def render_frame(self, cam_id: int, *, max_width: int = 1280, annotate: bool = True) -> bytes | None:
@@ -299,6 +388,9 @@ class CamsSystem:
             return None
         st = w.state
         fresh = time.time() - st.overlays_at < 2.5
+        if fresh and annotate:
+            for (px, py, pw, ph) in getattr(st, "people", []):
+                cv2.rectangle(frame, (px, py), (px + pw, py + ph), (200, 200, 200), 1)
         if fresh:
             blur = self.setting("blur_unknown") == "1"
             for o in st.overlays:
@@ -328,13 +420,14 @@ class CamsSystem:
         days = self.fsetting("retention_days", 30)
         cutoff = time.time() - days * 86400
         old = self.db.query("SELECT snapshot_path FROM sightings WHERE last_seen < ? AND snapshot_path IS NOT NULL", (cutoff,))
+        old += self.db.query("SELECT snapshot_path FROM alerts WHERE created_at < ? AND snapshot_path IS NOT NULL", (cutoff,))
         for r in old:
             try:
                 (self.paths.snapshots / r["snapshot_path"]).unlink(missing_ok=True)
             except OSError:
                 pass
         n = self.db.execute("DELETE FROM sightings WHERE last_seen < ?", (cutoff,))
-        self.db.execute("DELETE FROM alerts WHERE created_at < ? AND acknowledged = 1", (cutoff,))
+        self.db.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
         # remove empty day folders
         for d in self.paths.snapshots.glob("*"):
             if d.is_dir() and not any(d.iterdir()):
@@ -364,3 +457,14 @@ def snapshot_file(paths: Paths, rel: str) -> Path | None:
     if paths.snapshots.resolve() not in p.parents or not p.is_file():
         return None
     return p
+
+
+def point_in_polygon(x: float, y: float, poly: list) -> bool:
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / ((y2 - y1) or 1e-9) + x1:
+            inside = not inside
+    return inside

@@ -12,10 +12,12 @@ A collaboration between **TransitTech** and **Godwill Andrew Madunda**.
 | Area | Features |
 | --- | --- |
 | Cameras | Any IP / Ethernet / PoE camera or NVR channel (RTSP), HTTP/MJPEG cameras and phones, USB webcams, video files. Address helper for Hikvision, Dahua, Uniview, TP-Link, Reolink, Axis, EZVIZ and ONVIF. Connection test with preview. Network scan to find cameras. Auto-reconnect. |
-| Recognition | Face detection and recognition on every camera, on the PC itself (OpenCV YuNet + SFace). Five-angle enrolment (front, left, right, up, down) with a guided webcam wizard; also from any CAMS camera or uploaded photos. Duplicate-face warning. |
+| Recognition | Face detection and recognition on every camera, on the PC itself (OpenCV YuNet + SFace). 360° enrolment: seven face views (front, half left, left, half right, right, up, down) used for recognition, plus back and top reference pictures for guards. Guided webcam wizard, any CAMS camera, photos with a chosen side, or a turn-around video split into the best picture per angle. Duplicate-face warning. |
 | Finding people | Search by name or ID, or by photo. Last seen place and time, movement trail on the map, timeline for today / 24 h / 7 / 30 days. |
-| Campus builder | Draw buildings, zones, gates, fields and parking on a plan or satellite picture; set heights and floors; drag cameras into place and turn them to face the right way. 2D plan and 3D view. |
-| Alerts | Watch-list people seen, unknown people on restricted cameras, cameras offline. |
+| Campus builder | Draw buildings, zones, gates, fields and parking on a plan or satellite picture; move, turn and duplicate them; set heights, add and name floors; put cameras on a building and floor, drag them into place and turn them to face the right way. 2D plan and 3D view. |
+| Restricted areas | Per building or zone: only certain people may enter (by type, class/department or name), or certain people may not; closed hours. Alerts when someone is seen where they are not allowed. |
+| Suspicious activity | On-device person-detection AI (NanoDet-Plus) with rules per camera: loitering, crowding, running, people present during closed hours, camera covered / blurred / turned away. Alerts come with a scene picture. These flag situations for a guard to check; they do not judge intent. |
+| Alerts | Rule breaks, watch-list people seen, unknown people on restricted cameras, suspicious activity, cameras offline. |
 | Privacy and security | Faces of people who are not enrolled are blurred. Consent recorded per person. Automatic deletion after N days. Full erasure of a person. Admin / operator / viewer roles. Activity log of every search and change. Data never leaves the PC. |
 | Windows app | One setup .exe, desktop window, first-run setup wizard, guided tour and a written how-to guide. |
 
@@ -47,7 +49,7 @@ Run from source on any OS:
 
 ```bash
 pip install -r requirements-dev.txt
-python scripts/download_models.py   # once, 39 MB
+python scripts/download_models.py   # once, 43 MB
 python -m pytest -q                 # tests
 python -m cams                      # opens the app (or: python -m cams --no-window)
 ```
@@ -64,6 +66,7 @@ cams/
   system.py       camera threads -> recognition workers -> sightings, alerts, live view
   cameras.py      camera connections, address templates, network scan
   face_engine.py  face detection, face prints, pose (angle) estimation, blurring
+  activity.py     person detection, tracking and suspicious-activity rules
   db.py           SQLite schema and helpers
   auth.py         accounts, roles, sessions
   static/         the interface (plain JavaScript, no build step)
@@ -78,7 +81,9 @@ tests/            automated tests
 Recognition pipeline: each camera thread keeps only the newest frame; a small pool of workers
 analyses frames at the configured rate, matches each face print against the enrolled gallery
 (cosine similarity, default threshold 0.40), and merges repeated sightings of the same person
-on the same camera into one record.
+on the same camera into one record. Each sighting is checked against the access rules of the
+building or zone the camera watches. In parallel, a person detector and tracker feed the activity
+rules (loitering, crowding, running, closed hours, tampering).
 
 ## Responsible use
 

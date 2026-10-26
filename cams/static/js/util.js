@@ -181,6 +181,7 @@ export function where(ls) {
 }
 
 export const CATEGORIES = ["student", "staff", "visitor", "contractor", "other"];
+export const PLURAL = { student: "Students", staff: "Staff", visitor: "Visitors", contractor: "Contractors", other: "Others" };
 export const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 
 export function thumb(src, cls = "thumb", alt = "") {
