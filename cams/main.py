@@ -70,9 +70,14 @@ def _open_window(url: str) -> bool:
         import webview  # type: ignore
     except Exception:
         return False
-    webview.create_window(f"CAMS - {APP_FULL_NAME}", url, width=1360, height=860, min_size=(1000, 640))
-    webview.start()
-    return True
+    try:
+        webview.create_window(f"CAMS - {APP_FULL_NAME}", url, width=1360, height=860, min_size=(1000, 640))
+        # private_mode=False keeps sign-in and preferences between runs
+        webview.start(private_mode=False, storage_path=str(get_paths().data / "webview"))
+        return True
+    except Exception as exc:  # e.g. WebView2 runtime missing on an old Windows
+        logging.getLogger("cams").warning("Native window unavailable (%s); using the browser", exc)
+        return False
 
 
 def main(argv: list[str] | None = None) -> int:
