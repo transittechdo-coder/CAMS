@@ -31,7 +31,7 @@ def _setup_logging(paths) -> None:
     fh = logging.handlers.RotatingFileHandler(paths.logs / "cams.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
     fh.setFormatter(fmt)
     root.addHandler(fh)
-    if sys.stderr:
+    if sys.stderr and getattr(sys.stderr, "name", "") != os.devnull:
         sh = logging.StreamHandler()
         sh.setFormatter(fmt)
         root.addHandler(sh)
@@ -80,7 +80,27 @@ def _open_window(url: str) -> bool:
         return False
 
 
+def _ensure_streams() -> None:
+    """A windowed .exe has no console: sys.stdout/stderr are None and some
+    libraries crash when they try to write or check isatty(). Give them a sink."""
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _ensure_streams()
+    try:
+        return _main(argv)
+    except SystemExit:
+        raise
+    except Exception:
+        logging.getLogger("cams").exception("CAMS stopped because of an error")
+        raise
+
+
+def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cams", description=APP_FULL_NAME)
     ap.add_argument("--no-window", action="store_true", help="run the server only")
     ap.add_argument("--lan", action="store_true", help="listen on all network interfaces")
@@ -114,7 +134,8 @@ def main(argv: list[str] | None = None) -> int:
     system = CamsSystem(paths)
     system.start()
     app = create_app(system)
-    config = uvicorn.Config(app, host=host, port=args.port, log_level="warning", access_log=False)
+    # log_config=None: use our own logging (uvicorn's default needs a console)
+    config = uvicorn.Config(app, host=host, port=args.port, log_level="warning", access_log=False, log_config=None)
     server = uvicorn.Server(config)
 
     if args.no_window:

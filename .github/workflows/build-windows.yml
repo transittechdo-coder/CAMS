@@ -50,7 +50,12 @@ jobs:
             try { $r = Invoke-RestMethod http://127.0.0.1:8765/api/status; if ($r.app -eq "CAMS" -and $r.models_ok) { $ok = $true; break } } catch {}
           }
           Stop-Process -Id $p.Id -Force
-          if (-not $ok) { Get-Content "$env:CAMS_DATA_DIR\logs\cams.log" -ErrorAction SilentlyContinue; throw "CAMS.exe did not start" }
+          if (-not $ok) {
+            # show the end of the log as annotations so it is visible on the run's summary page
+            $tail = Get-Content "$env:CAMS_DATA_DIR\logs\cams.log" -Tail 25 -ErrorAction SilentlyContinue
+            if ($tail) { $tail | ForEach-Object { Write-Host "::error title=cams.log::$_" } } else { Write-Host "::error::No log file was written" }
+            throw "CAMS.exe did not start"
+          }
           Write-Host "CAMS.exe started and face models loaded"
 
       - name: Build installer
