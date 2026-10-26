@@ -43,7 +43,12 @@ runs the tests, builds `CAMS.exe` and (if [Inno Setup 6](https://jrsoftware.org/
 installed) `installer\Output\CAMS-Setup-<version>.exe`.
 
 GitHub also builds the installer automatically on every push to `main`
-(`.github/workflows/build-windows.yml`). Push a tag such as `v1.0.0` to publish a release.
+(`.github/workflows/build-windows.yml`); find it on the **Actions** tab, open the latest
+run and download **CAMS-Setup** under *Artifacts*.
+
+To publish a version for everyone: on GitHub open **Releases → Draft a new release**, type a new
+tag such as `v1.0.0`, and press **Publish release**. The workflow builds the installer and
+attaches it to that release within about 10 minutes.
 
 Run from source on any OS:
 
