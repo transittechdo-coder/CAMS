@@ -140,21 +140,37 @@ jobs:
           path: installer/Output/*.exe
           retention-days: 30
 
+      # Every tested build on main is published as a GitHub Release, so the
+      # website's Download button (releases/latest/download/CAMS-Setup.exe)
+      # always gives the newest installer that passed every check above.
       - name: Publish release
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release')
         env:
-          TAG: ${{ github.event.release.tag_name || github.ref_name }}
           GH_TOKEN: ${{ github.token }}
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
         shell: pwsh
         run: |
-          $files = Get-ChildItem installer/Output/*.exe | ForEach-Object { $_.FullName }
-          gh release view $env:TAG 2>$null
+          $ver = python -c "import cams;print(cams.__version__)"
+          $tag = if ("${{ github.event.release.tag_name }}") { "${{ github.event.release.tag_name }}" } elseif ("${{ github.ref }}".StartsWith("refs/tags/")) { "${{ github.ref_name }}" } else { "v$ver" }
+          $versioned = (Get-ChildItem installer/Output/*.exe | Select-Object -First 1).FullName
+          $stable = Join-Path (Split-Path $versioned) "CAMS-Setup.exe"
+          Copy-Item $versioned $stable -Force
+          $notes = @"
+          CAMS $ver for Windows 10 and 11 (64-bit).
+
+          **Download CAMS-Setup.exe**, double-click it and follow the steps. No administrator rights and no internet are needed. CAMS opens at the end and puts an icon on your desktop.
+
+          If Windows shows "Windows protected your PC", click **More info** then **Run anyway** (the installer is not code-signed).
+
+          Built and tested automatically from commit ${{ github.sha }}.
+          "@
+          gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            # release was created on github.com: just attach the installer
-            gh release upload $env:TAG $files --clobber
+            gh release upload $tag $versioned $stable --clobber
           } else {
-            gh release create $env:TAG $files --title "CAMS $env:TAG" --notes "Download CAMS-Setup and run it on Windows 10 or 11 (64-bit). See docs/USER_GUIDE.md."
+            gh release create $tag $versioned $stable --title "CAMS $ver" --notes $notes --latest --target ${{ github.sha }}
           }
+          if ($LASTEXITCODE -ne 0) { throw "Could not publish the release" }
+          Write-Host "Published $tag"
 
   # Runs build.bat exactly as a person would (double-click), then checks that
   # CAMS got installed, has a desktop icon and is open at the end.
