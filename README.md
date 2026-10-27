@@ -42,9 +42,11 @@ Then read [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ## Build it yourself (developers)
 
-On Windows, double-click **`build.bat`**. It sets up Python packages, downloads the face models,
-runs the tests, builds `CAMS.exe` and (if [Inno Setup 6](https://jrsoftware.org/isdl.php) is
-installed) `installer\Output\CAMS-Setup-<version>.exe`.
+On Windows, double-click **`build.bat`**. It sets up Python packages, downloads the AI models,
+runs the tests, builds `CAMS.exe` and `installer\Output\CAMS-Setup-<version>.exe` (if
+[Inno Setup 6](https://jrsoftware.org/isdl.php) is installed), then **installs CAMS on that PC,
+puts the CAMS icon on the desktop and opens CAMS**. After that, just double-click the icon.
+Copy `CAMS-Setup-<version>.exe` to install CAMS on other PCs.
 
 GitHub also builds the installer automatically on every push to `main`
 (`.github/workflows/build-windows.yml`); find it on the **Actions** tab, open the latest

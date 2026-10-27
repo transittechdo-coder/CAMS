@@ -227,6 +227,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             "site_name": db.get_setting("site_name"),
             "user": user and {k: user[k] for k in ("id", "username", "full_name", "role")},
             "onboarding_done": db.get_setting("onboarding_done") == "1",
+            "ui_loads": sysm.stats.get("ui_loads", 0),
         }
 
     @app.post("/api/setup")

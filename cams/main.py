@@ -134,6 +134,7 @@ def _window_edge_app(url: str, ready=None) -> bool:
 
 def _open_window(url: str, ready=None) -> str:
     """Open the CAMS window and return when the user closes it. Returns the mode used."""
+    _splash(close=True)
     if _window_webview(url, ready):
         return "webview"
     if _window_edge_app(url, ready):
@@ -144,6 +145,36 @@ def _open_window(url: str, ready=None) -> str:
         ready(done.set)
         done.wait(65)
     return "browser"
+
+
+# ---------------------------------------------------------------- feedback
+def _splash(text: str | None = None, close: bool = False) -> None:
+    """Loading picture shown by CAMS.exe the moment it is opened (PyInstaller splash)."""
+    try:
+        import pyi_splash  # type: ignore  # only exists inside the built CAMS.exe
+    except Exception:
+        return
+    try:
+        if close:
+            pyi_splash.close()
+        elif text and pyi_splash.is_alive():
+            pyi_splash.update_text(text)
+    except Exception:
+        pass
+
+
+def _message(title: str, text: str) -> None:
+    """Show a plain Windows message box (nothing is ever silent)."""
+    _splash(close=True)
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(None, text, title, 0x10 | 0x40000)  # error icon, top-most
+            return
+        except Exception:
+            pass
+    print(f"{title}: {text}", file=sys.stderr)
 
 
 def _ensure_streams() -> None:
@@ -160,10 +191,17 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _main(argv)
     except SystemExit:
+        _splash(close=True)
         raise
-    except Exception:
+    except Exception as exc:
         logging.getLogger("cams").exception("CAMS stopped because of an error")
-        raise
+        logs = get_paths().logs / "cams.log"
+        _message("CAMS could not start",
+                 f"CAMS could not start:\n\n{exc}\n\nDetails are saved in:\n{logs}\n\n"
+                 "Try opening CAMS again. If it keeps happening, send this file to TransitTech.")
+        return 1
+    finally:
+        _splash(close=True)
 
 
 def _main(argv: list[str] | None = None) -> int:
@@ -188,6 +226,7 @@ def _main(argv: list[str] | None = None) -> int:
         prev = None
     for port in [p for p in (prev, args.port) if p]:
         if _already_running(port) and not args.check_window:
+            _splash(close=True)
             if not args.no_window:
                 _open_window(f"http://127.0.0.1:{port}/")
             return 0
@@ -201,6 +240,7 @@ def _main(argv: list[str] | None = None) -> int:
     url = f"http://127.0.0.1:{port}/"
 
     _setup_logging(paths)
+    _splash("Loading face recognition...")
     log = logging.getLogger("cams")
     log.info("Starting CAMS %s, data in %s", __version__, paths.data)
 
@@ -210,6 +250,7 @@ def _main(argv: list[str] | None = None) -> int:
     from .system import CamsSystem
 
     system = CamsSystem(paths)
+    _splash("Connecting cameras...")
     system.start()
     app = create_app(system)
     # log_config=None: use our own logging (uvicorn's default needs a console)
@@ -217,6 +258,7 @@ def _main(argv: list[str] | None = None) -> int:
     server = uvicorn.Server(config)
 
     if args.no_window:
+        _splash(close=True)
         print(f"CAMS is running at {url}  (Ctrl+C to stop)")
         try:
             server.run()
@@ -226,9 +268,11 @@ def _main(argv: list[str] | None = None) -> int:
 
     t = threading.Thread(target=server.run, daemon=True)
     t.start()
+    _splash("Opening CAMS...")
     if not _wait_ready(port):
         log.error("Server did not start")
-        return 1
+        system.stop()
+        raise RuntimeError("The CAMS engine did not start within 30 seconds.")
     try:
         run_file.write_text(json.dumps({"port": port, "pid": os.getpid()}))
     except OSError:

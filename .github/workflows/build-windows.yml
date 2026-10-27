@@ -155,3 +155,55 @@ jobs:
           } else {
             gh release create $env:TAG $files --title "CAMS $env:TAG" --notes "Download CAMS-Setup and run it on Windows 10 or 11 (64-bit). See docs/USER_GUIDE.md."
           }
+
+  # Runs build.bat exactly as a person would (double-click), then checks that
+  # CAMS got installed, has a desktop icon and is open at the end.
+  build-bat:
+    runs-on: windows-latest
+    if: github.event_name != 'release'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Run build.bat
+        shell: cmd
+        run: build.bat
+
+      - name: Check CAMS is installed, on the desktop and open
+        shell: pwsh
+        run: |
+          function Fail($msg) {
+            Write-Host "::error title=build.bat check::$msg"
+            Get-Content (Join-Path $env:APPDATA "CAMS\logs\cams.log") -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "::warning title=cams.log::$_" }
+            exit 1
+          }
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\CAMS\CAMS.exe"
+          if (-not (Test-Path $exe)) { Fail "build.bat did not install CAMS" }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) "CAMS.lnk"
+          if (-not (Test-Path $lnk)) { Fail "build.bat left no CAMS icon on the desktop" }
+          $ok = $false
+          for ($i = 0; $i -lt 45; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $run = Get-Content (Join-Path $env:APPDATA "CAMS\running.json") -ErrorAction Stop | ConvertFrom-Json
+              $r = Invoke-RestMethod "http://127.0.0.1:$($run.port)/api/status"
+              if ($r.app -eq "CAMS" -and $r.models_ok) { $ok = $true; break }
+            } catch {}
+          }
+          if (-not $ok) { Fail "CAMS was not open after build.bat finished" }
+          $loads = 0
+          for ($i = 0; $i -lt 20 -and $loads -lt 1; $i++) {
+            Start-Sleep -Seconds 2
+            $loads = (Invoke-RestMethod "http://127.0.0.1:$($run.port)/api/status").ui_loads
+          }
+          Get-Process CAMS -ErrorAction SilentlyContinue | Stop-Process -Force
+          if ($loads -lt 1) { Fail "CAMS started but its window never showed the screens" }
+          Write-Host "build.bat installed CAMS, made the desktop icon and opened the CAMS window."
