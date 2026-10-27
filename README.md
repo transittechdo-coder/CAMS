@@ -28,8 +28,12 @@ Internet is needed only to download the installer.
 
 1. Download `CAMS-Setup-x.y.z.exe` from the [Releases](../../releases) page
    (or from the latest run on the **Actions** tab, under *Artifacts*).
-2. Run it and follow the steps. Windows 10 or 11, 64-bit.
-3. Open CAMS from the desktop shortcut and follow the setup wizard.
+2. Run it and follow the steps. Windows 10 or 11, 64-bit. No administrator rights are needed;
+   CAMS installs for the current user, like Scratch or Zoom.
+3. CAMS opens at the end of setup. Later, double-click the **CAMS** icon on the desktop
+   (or find CAMS in the Start menu). It opens in its own window and needs no internet.
+
+To install for every user of the PC, an IT admin can run `CAMS-Setup-x.y.z.exe /ALLUSERS`.
 
 Then read [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
@@ -59,7 +63,9 @@ python -m pytest -q                 # tests
 python -m cams                      # opens the app (or: python -m cams --no-window)
 ```
 
-Options: `--lan` lets other PCs on the network open CAMS at `http://<this-pc>:8765`;
+Behind its window, CAMS runs a small private web server that only this PC can reach
+(127.0.0.1; no admin rights needed). The window is Edge WebView2, or Edge/Chrome in app mode
+if WebView2 is missing. Options: `--lan` lets other PCs on the network open CAMS at `http://<this-pc>:8765`;
 `--port 8770` changes the port. Data is stored in `%APPDATA%\CAMS` (Windows) or `~/.cams`.
 
 ## How it is built

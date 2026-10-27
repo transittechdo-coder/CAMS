@@ -24,7 +24,11 @@ WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
-PrivilegesRequired=admin
+; CAMS needs no administrator rights: install for the current user, with no
+; Windows permission prompt (like Scratch, VS Code, Zoom). An IT admin can still
+; install for all users with:  CAMS-Setup.exe /ALLUSERS
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline
 DisableProgramGroupPage=yes
 ; refresh Explorer so the new desktop icon shows at once
 ChangesAssociations=yes
@@ -37,7 +41,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "autostart"; Description: "Start CAMS when this PC starts (recommended for the security office)"; GroupDescription: "Startup:"; Flags: unchecked
-Name: "lan"; Description: "Let other computers on this network open CAMS (opens port 8765 in the firewall)"; GroupDescription: "Network:"; Flags: unchecked
 
 [Files]
 Source: "..\dist\CAMS\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -46,32 +49,40 @@ Source: "..\docs\PRIVACY.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
 ; The desktop and Start menu shortcuts are always created (not optional).
-Name: "{autodesktop}\CAMS"; Filename: "{app}\CAMS.exe"; Parameters: "{code:LanArg}"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
-Name: "{group}\CAMS"; Filename: "{app}\CAMS.exe"; Parameters: "{code:LanArg}"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
+Name: "{autodesktop}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
+Name: "{group}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
 Name: "{group}\CAMS user guide"; Filename: "{app}\docs\USER_GUIDE.md"
 Name: "{group}\Uninstall CAMS"; Filename: "{uninstallexe}"
-Name: "{userstartup}\CAMS"; Filename: "{app}\CAMS.exe"; Parameters: "{code:LanArg}"; WorkingDir: "{app}"; Tasks: autostart
+Name: "{userstartup}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; Tasks: autostart
 
 [Run]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""CAMS"" dir=in action=allow protocol=TCP localport=8765 profile=private,domain"; Flags: runhidden; Tasks: lan
-Filename: "{app}\CAMS.exe"; Parameters: "{code:LanArg}"; WorkingDir: "{app}"; Description: "Open CAMS now"; Flags: nowait postinstall skipifsilent
-
-[UninstallRun]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""CAMS"""; Flags: runhidden; RunOnceId: "RemoveFirewall"
+Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; Description: "Open CAMS now"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{userdesktop}\CAMS.lnk"
 
 [Messages]
-FinishedLabel=CAMS is installed and ready. Open it with the CAMS icon on your desktop or in the Start menu.%n%nThe first time, CAMS asks you to create the admin account. Your data is kept in %APPDATA%\CAMS and is not removed if you uninstall.
+FinishedLabel=CAMS is installed and ready. Open it with the CAMS icon on your desktop or in the Start menu.%n%nThe first time, CAMS asks you to name your site and create your CAMS sign-in. Your data is kept in %APPDATA%\CAMS and is not removed if you uninstall.
 
 [Code]
-function LanArg(Param: String): String;
+{ Close a running CAMS before installing over it, so files can be replaced. }
+function InitializeSetup(): Boolean;
+var
+  Code: Integer;
 begin
-  if WizardIsTaskSelected('lan') then Result := '--lan' else Result := '';
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM CAMS.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := True;
 end;
 
-{ Safety net: if the all-users desktop shortcut could not be made (for example a
+function InitializeUninstall(): Boolean;
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM CAMS.exe /F', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := True;
+end;
+
+{ Safety net: if the desktop shortcut could not be made (for example a
   locked-down or redirected desktop), put one on the installing user's own desktop. }
 procedure CurStepChanged(CurStep: TSetupStep);
 var
@@ -85,7 +96,7 @@ begin
       Link := ExpandConstant('{userdesktop}\CAMS.lnk');
       Log('All-users desktop shortcut missing; creating ' + Link);
       try
-        CreateShellLink(Link, 'Camera AI Monitoring System', Target, LanArg(''),
+        CreateShellLink(Link, 'Camera AI Monitoring System', Target, '',
           ExpandConstant('{app}'), Target, 0, SW_SHOWNORMAL);
       except
         Log('Could not create the user desktop shortcut: ' + GetExceptionMessage);

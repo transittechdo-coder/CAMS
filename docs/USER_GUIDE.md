@@ -140,11 +140,11 @@ Open **Find a person** and type a name or ID number.
 - **Backup:** download a backup zip and keep it locked away; it contains personal data.
 - **Activity log:** who searched for whom, who enrolled or deleted whom.
 
-## 8. Use CAMS from another PC
+## 8. Use CAMS from another PC (optional, for IT staff)
 
-Run the installer with **Let other computers on this network open CAMS** ticked (or start
-`CAMS.exe --lan`). Other PCs on the same network then open `http://CAMS-PC-IP:8765` in a browser
-and sign in with their own account.
+CAMS normally works only on the PC where it is installed. To let other PCs on the same network
+sign in, an IT person can start `CAMS.exe --lan` and allow port 8765 in Windows Firewall (this
+step needs administrator rights). Other PCs then open `http://CAMS-PC-IP:8765` in a browser.
 
 ## Problems
 

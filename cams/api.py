@@ -1028,6 +1028,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.get("/")
     def index():
+        sysm.stats["ui_loads"] = sysm.stats.get("ui_loads", 0) + 1
         return FileResponse(static / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
