@@ -173,13 +173,13 @@ jobs:
         shell: pwsh
         run: if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
 
-      - name: Run build.bat
-        shell: cmd
-        run: build.bat
-
-      - name: Check CAMS is installed, on the desktop and open
+      # One step: GitHub stops programs started in a step when that step ends,
+      # so CAMS (opened by build.bat) must be checked in the same step.
+      - name: Run build.bat and check CAMS is installed, on the desktop and open
         shell: pwsh
         run: |
+          cmd /c build.bat
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error title=build.bat::build.bat failed"; exit 1 }
           function Fail($msg) {
             Write-Host "::error title=build.bat check::$msg"
             Get-Content (Join-Path $env:APPDATA "CAMS\logs\cams.log") -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "::warning title=cams.log::$_" }
