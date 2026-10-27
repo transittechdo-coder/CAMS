@@ -5,7 +5,9 @@ The same guide is inside CAMS under **How to use CAMS**, with a **Show me around
 
 ## 1. First start
 
-Open **CAMS** from the desktop. The setup wizard asks for:
+The installer puts a **CAMS** icon on the desktop and in the Start menu, and opens CAMS when it
+finishes. Later, double-click the **CAMS** icon on the desktop (or press the Windows key and type
+*CAMS*). The first time, the setup wizard asks for:
 
 1. The name of your school or company.
 2. An **admin** account (username and password of at least 8 characters with letters and numbers).

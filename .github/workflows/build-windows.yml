@@ -69,6 +69,57 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
           Get-ChildItem installer\Output
 
+      - name: Install on a clean PC and check it is ready to use
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem installer\Output\*.exe | Select-Object -First 1).FullName
+          Write-Host "Installing $setup silently (default choices)"
+          $p = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/LOG=$env:RUNNER_TEMP\setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 40; throw "Setup failed with code $($p.ExitCode)" }
+
+          $exe = Join-Path $env:ProgramFiles "CAMS\CAMS.exe"
+          if (-not (Test-Path $exe)) { throw "CAMS.exe was not installed to $exe" }
+
+          # The desktop icon must exist (all-users desktop, or the user's own as a fallback)
+          $links = @("$env:PUBLIC\Desktop\CAMS.lnk", "$([Environment]::GetFolderPath('Desktop'))\CAMS.lnk") | Where-Object { Test-Path $_ }
+          if (-not $links) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 40; throw "No CAMS icon on the desktop" }
+          $lnk = $links[0]
+          Write-Host "Desktop icon found: $lnk"
+          $sh = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+          Write-Host "  points to: $($sh.TargetPath)  icon: $($sh.IconLocation)"
+          if ($sh.TargetPath -ne $exe) { throw "Desktop icon points to the wrong program: $($sh.TargetPath)" }
+
+          $start = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\CAMS\CAMS.lnk"
+          if (-not (Test-Path $start)) { throw "No CAMS entry in the Start menu" }
+          Write-Host "Start menu entry found: $start"
+
+          # Double-click the desktop icon (open the shortcut) and wait until CAMS answers
+          Get-Process CAMS -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Process -FilePath $lnk
+          $ok = $false
+          for ($i = 0; $i -lt 45; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-RestMethod http://127.0.0.1:8765/api/status
+              if ($r.app -eq "CAMS" -and $r.models_ok -and $r.needs_setup) { $ok = $true; break }
+            } catch {}
+          }
+          $page = $null
+          if ($ok) { $page = (Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode }
+          Get-Process CAMS -ErrorAction SilentlyContinue | Stop-Process -Force
+          if (-not $ok -or $page -ne 200) {
+            $log = Join-Path $env:APPDATA "CAMS\logs\cams.log"
+            Get-Content $log -Tail 25 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "::error title=cams.log::$_" }
+            throw "CAMS did not start from the desktop icon"
+          }
+          Write-Host "CAMS started from the desktop icon, AI models loaded, first-run setup screen is ready."
+
+          # Uninstall cleanly
+          $un = Join-Path $env:ProgramFiles "CAMS\unins000.exe"
+          Start-Process -FilePath $un -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          if (Test-Path "$env:PUBLIC\Desktop\CAMS.lnk") { throw "Uninstall left the desktop icon behind" }
+          Write-Host "Uninstall removed the program and icons."
+
       - uses: actions/upload-artifact@v4
         with:
           name: CAMS-Setup
