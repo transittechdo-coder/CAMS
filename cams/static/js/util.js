@@ -192,3 +192,15 @@ export function thumb(src, cls = "thumb", alt = "") {
 
 export const photoUrl = (p) => (p && p.photo_path ? `/api/people/${p.id ?? p.person_id}/photo` : null);
 export const snapUrl = (s) => (s && s.snapshot_path ? `/api/snapshots/${s.snapshot_path}` : null);
+
+// The CAMS logo mark. The C takes the text colour around it, so it shows on light and dark backgrounds.
+export function logoMark(cls = "brand-mark") {
+  const wrap = document.createElement("span");
+  wrap.innerHTML = `<svg class="${cls}" viewBox="0 0 96 96" role="img" aria-label="CAMS logo">
+    <g fill="none" stroke="#00998c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 28V13a7 7 0 0 1 7-7h15"/><path d="M68 6h15a7 7 0 0 1 7 7v15"/>
+      <path d="M90 68v15a7 7 0 0 1-7 7H68"/><path d="M28 90H13a7 7 0 0 1-7-7V68"/></g>
+    <path d="M67.8 31.6A25.75 25.75 0 1 0 67.8 63.4" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round"/>
+    <circle cx="67" cy="47.5" r="6" fill="#00998c"/></svg>`;
+  return wrap.firstElementChild;
+}

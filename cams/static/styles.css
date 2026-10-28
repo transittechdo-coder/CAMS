@@ -4,7 +4,7 @@
 :root {
   --paper: #eef2f0;
   --sheet: #f8faf9;
-  --ink: #14304a;
+  --ink: #0e1d2d;
   --ink-2: #4a6177;
   --ink-3: #7d90a1;
   --line: #c9d4d6;
@@ -65,7 +65,7 @@ img { max-width: 100%; }
   display: flex; flex-direction: column; padding: 16px 10px; gap: 2px; overflow-y: auto;
 }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
-.brand-mark { width: 34px; height: 34px; flex: none; }
+.brand-mark { width: 36px; height: 36px; flex: none; color: var(--ink); }
 .brand b { font-family: var(--display); font-size: 21px; letter-spacing: 0.08em; display: block; line-height: 1; }
 .brand small { color: var(--ink-3); font-size: 11.5px; }
 .nav-btn {
@@ -288,7 +288,10 @@ dialog .d-foot { padding: 12px 20px 16px; display: flex; justify-content: flex-e
 .gate { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
 .gate-art { background: var(--ink); color: #e3ecef; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 40px; }
 .gate-art svg.plan { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.9; }
-.gate-art h1 { font-size: 44px; letter-spacing: 0.1em; position: relative; }
+.gate-logo { position: relative; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.gate-mark { width: 76px; height: 76px; color: #e3ecef; flex: none; }
+.gate-logo small { color: #a9bcc6; font-size: 13px; letter-spacing: 0.02em; }
+.gate-art h1 { font-size: 44px; letter-spacing: 0.06em; position: relative; }
 .gate-art p { position: relative; color: #a9bcc6; max-width: 40ch; }
 .gate-form { display: grid; place-content: center; padding: 40px; }
 .gate-form form { width: min(380px, 80vw); display: grid; gap: 14px; }

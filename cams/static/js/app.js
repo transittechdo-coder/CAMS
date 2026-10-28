@@ -1,5 +1,5 @@
 // CAMS front end: sign-in / first-time setup, the main shell and page routing.
-import { h, get, post, icon, toast, fail, ICONS, field } from "./util.js";
+import { logoMark, h, get, post, icon, toast, fail, ICONS, field } from "./util.js";
 import { PAGES } from "./pages.js";
 import { startTour, tourWanted } from "./tour.js";
 
@@ -53,7 +53,7 @@ function planArt() {
 
 function gate(form, lead) {
   root.replaceChildren(h("div", { class: "gate" },
-    h("div", { class: "gate-art" }, planArt(), h("h1", {}, "CAMS"), h("p", {}, lead)),
+    h("div", { class: "gate-art" }, planArt(), h("div", { class: "gate-logo" }, logoMark("gate-mark"), h("div", {}, h("h1", {}, "CAMS"), h("small", {}, "Camera AI Management System"))), h("p", {}, lead)),
     h("div", { class: "gate-form" }, form),
   ));
   form.querySelector("input")?.focus();
@@ -74,7 +74,7 @@ function renderLogin() {
     try { await post("/api/login", { username: form.username.value, password: form.password.value }); boot(); }
     catch (ex) { err.textContent = ex.message; }
   });
-  gate(form, "Camera AI Monitoring System. Everything stays on this computer.");
+  gate(form, "Camera AI Management System. Everything stays on this computer.");
 }
 
 function renderSetup() {
@@ -148,8 +148,8 @@ function renderShell() {
   } }, icon(theme() === "dark" ? "sun" : "moon"));
 
   const rail = h("aside", { class: "rail" },
-    h("div", { class: "brand" }, h("img", { class: "brand-mark", src: "/static/icon.svg", alt: "" }),
-      h("div", {}, h("b", {}, "CAMS"), h("small", {}, state.status.site_name))),
+    h("div", { class: "brand" }, logoMark(),
+      h("div", {}, h("b", {}, "CAMS"), h("small", {}, state.status.site_name || "Camera AI Management System"))),
     nav,
     h("div", { class: "rail-foot" },
       h("div", { class: "who" }, state.user.full_name || state.user.username),

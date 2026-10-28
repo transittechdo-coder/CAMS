@@ -33,7 +33,7 @@ SPLASH = ROOT / "installer" / "splash.png"
 try:
     import tkinter  # noqa: F401
     splash = Splash(str(SPLASH), binaries=a.binaries, datas=a.datas, text_pos=(40, 248),
-                    text_size=10, text_color="#A9BCC6", minify_script=True, always_on_top=True) if SPLASH.exists() else None
+                    text_size=10, text_color="#4A6177", minify_script=True, always_on_top=True) if SPLASH.exists() else None
 except Exception as exc:  # no Tk: build without a splash
     print("No splash screen:", exc)
     splash = None

@@ -7,7 +7,7 @@
 
 [Setup]
 AppId={{6B1C3E2A-4D7F-4C9B-9E1A-CA35C0A11E01}
-AppName=CAMS - Camera AI Monitoring System
+AppName=CAMS - Camera AI Management System
 AppVersion={#AppVersion}
 AppVerName=CAMS {#AppVersion}
 AppPublisher=TransitTech
@@ -49,8 +49,8 @@ Source: "..\docs\PRIVACY.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 
 [Icons]
 ; The desktop and Start menu shortcuts are always created (not optional).
-Name: "{autodesktop}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
-Name: "{group}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Monitoring System"
+Name: "{autodesktop}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Management System"
+Name: "{group}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; IconFilename: "{app}\CAMS.exe"; Comment: "Camera AI Management System"
 Name: "{group}\CAMS user guide"; Filename: "{app}\docs\USER_GUIDE.md"
 Name: "{group}\Uninstall CAMS"; Filename: "{uninstallexe}"
 Name: "{userstartup}\CAMS"; Filename: "{app}\CAMS.exe"; WorkingDir: "{app}"; Tasks: autostart
@@ -96,7 +96,7 @@ begin
       Link := ExpandConstant('{userdesktop}\CAMS.lnk');
       Log('All-users desktop shortcut missing; creating ' + Link);
       try
-        CreateShellLink(Link, 'Camera AI Monitoring System', Target, '',
+        CreateShellLink(Link, 'Camera AI Management System', Target, '',
           ExpandConstant('{app}'), Target, 0, SW_SHOWNORMAL);
       except
         Log('Could not create the user desktop shortcut: ' + GetExceptionMessage);

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/splash.png" alt="CAMS - Camera AI Monitoring System" width="520">
+  <img src="docs/images/logo.png" alt="CAMS - Camera AI Management System" width="480">
 </p>
 
 <p align="center">

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 180">
+  <title>CAMS - Camera AI Management System</title>
+  <style>
+    .ink { fill: #0e1d2d; } .c { stroke: #0e1d2d; } .sub { fill: #0e1d2d; }
+    @media (prefers-color-scheme: dark) { .ink, .sub { fill: #e3ecef; } .c { stroke: #e3ecef; } }
+  </style>
+  <g transform="translate(36 42)">
+    <g fill="none" stroke="#00998c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 28V13a7 7 0 0 1 7-7h15"/><path d="M68 6h15a7 7 0 0 1 7 7v15"/>
+      <path d="M90 68v15a7 7 0 0 1-7 7H68"/><path d="M28 90H13a7 7 0 0 1-7-7V68"/>
+    </g>
+    <path class="c" d="M67.8 31.6A25.75 25.75 0 1 0 67.8 63.4" fill="none" stroke-width="9.5" stroke-linecap="round"/>
+    <circle cx="67" cy="47.5" r="6" fill="#00998c"/>
+  </g>
+  <text class="ink" x="160" y="99" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-weight="800" font-size="66" letter-spacing="1">CAMS</text>
+  <text class="sub" x="162" y="132" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-weight="500" font-size="15">Camera AI Management System</text>
+</svg>

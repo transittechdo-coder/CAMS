@@ -69,7 +69,7 @@ echo [7/7] Putting a CAMS icon on your desktop and opening CAMS...
 set APP=%CD%\dist\CAMS\CAMS.exe
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop')+'\CAMS.lnk');" ^
-  "$s.TargetPath='%APP%'; $s.WorkingDirectory='%CD%\dist\CAMS'; $s.IconLocation='%APP%,0'; $s.Description='Camera AI Monitoring System'; $s.Save()"
+  "$s.TargetPath='%APP%'; $s.WorkingDirectory='%CD%\dist\CAMS'; $s.IconLocation='%APP%,0'; $s.Description='Camera AI Management System'; $s.Save()"
 start "" "%APP%"
 echo.
 echo ============================================================
