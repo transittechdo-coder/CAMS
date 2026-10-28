@@ -3,6 +3,6 @@
 A TransitTech and Godwill Andrew Madunda collaboration.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 APP_NAME = "CAMS"
 APP_FULL_NAME = "Camera AI Management System"

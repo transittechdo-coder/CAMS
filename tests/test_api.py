@@ -293,3 +293,25 @@ def test_map_scene_roundtrip(admin):
     assert [o["type"] for o in got["objects"]] == ["building", "roofHip"]
     assert client.put("/api/map/scene", json={"objects": "nope"}).status_code == 400
     assert client.put("/api/map/scene", json={"objects": [], "paint": "javascript:x"}).status_code == 400
+
+
+def test_screen_files_are_revalidated(client):
+    # after an update the window must not keep showing the old screens
+    r = client.get("/static/js/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
+def test_window_cache_cleared_once_per_version(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAMS_DATA_DIR", str(tmp_path / "d"))
+    from cams import __version__, main
+    from cams.config import get_paths
+
+    data = get_paths().data
+    cache = data / "webview" / "EBWebView" / "Default" / "Cache"
+    cache.mkdir(parents=True)
+    (cache / "old.js").write_text("old")
+    keep = data / "webview" / "EBWebView" / "Default" / "Preferences"
+    keep.write_text("{}")
+    main._clear_window_cache()
+    assert not cache.exists() and keep.exists()
+    assert (data / "window-version.txt").read_text() == __version__

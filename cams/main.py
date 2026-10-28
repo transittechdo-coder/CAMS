@@ -132,9 +132,37 @@ def _window_edge_app(url: str, ready=None) -> bool:
     return True
 
 
+def _clear_window_cache() -> None:
+    """After an update, drop the window's saved copies of the old screens.
+
+    Only the browser caches are removed (not sign-ins or settings), and only
+    once per new version.
+    """
+    import shutil
+
+    from . import __version__
+
+    data = get_paths().data
+    marker = data / "window-version.txt"
+    try:
+        if marker.is_file() and marker.read_text().strip() == __version__:
+            return
+        for root in (data / "webview", data / "window"):
+            if not root.is_dir():
+                continue
+            for name in ("Cache", "Code Cache", "GPUCache", "Service Worker", "DawnCache", "DawnGraphiteCache"):
+                for d in root.rglob(name):
+                    if d.is_dir():
+                        shutil.rmtree(d, ignore_errors=True)
+        marker.write_text(__version__)
+    except OSError as exc:
+        logging.getLogger("cams").warning("Could not clear the window cache: %s", exc)
+
+
 def _open_window(url: str, ready=None) -> str:
     """Open the CAMS window and return when the user closes it. Returns the mode used."""
     _splash(close=True)
+    _clear_window_cache()
     if _window_webview(url, ready):
         return "webview"
     if _window_edge_app(url, ready):

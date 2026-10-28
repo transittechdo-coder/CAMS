@@ -1060,6 +1060,15 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return JSONResponse({"error": f"{field.replace('_', ' ')}: {first.get('msg', 'invalid value')}"}, status_code=422)
 
     static = paths.static
+    # Always check the screen files with the server (cheap 304s), so an update shows at once
+    # instead of the window reusing the previous version's copies.
+    @app.middleware("http")
+    async def no_stale_screens(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     app.mount("/static", StaticFiles(directory=static), name="static")
 
     @app.get("/")
