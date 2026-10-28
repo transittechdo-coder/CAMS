@@ -72,6 +72,58 @@ Open **Campus builder**.
    Reading room, ...). Cameras can then be placed on a named floor.
 7. Press **3D** (top right of the map) to see the campus in 3D, with floor lines on each building.
 
+### 3D Map Studio (draw the campus in 3D)
+
+In **Campus builder**, press **Open 3D Map Studio**. It works like a game level editor.
+
+**Moving the view**
+
+| To | Do this |
+| --- | --- |
+| Look around | Hold the right mouse button and move the mouse |
+| Fly | W A S D or the arrow keys; Q / E to go down / up; hold Shift to go faster |
+| Zoom | Mouse wheel (it zooms towards where you point) |
+| Slide the view | Hold the middle button (the wheel) and move |
+| Turn around a point | Drag empty space with the left button |
+| Walk inside | Press **Walk inside**: move the mouse to look, W A S D to walk, Space to jump, walk into a ladder to climb. Esc stops |
+| Quick views | **Top**, **Front**, **Side**, **3D**, and **Focus** (F) to fly to the chosen shape |
+
+**Drawing**
+
+1. Pick a tab on the left (**Shapes**, **Building**, **Roofs**, **Outdoor**, **Objects**) and choose a shape.
+2. Click in the view to put it there, or drag to draw its size. Point at the **top** of another shape
+   and the new one sits on it, so you can stack blocks, floors and rooms.
+3. **Walls, fences, railings, hedges, roads and paths**: click each corner. Esc, a double-click or a
+   right-click finishes. Hold Shift for straight lines.
+4. **Roofs** and **floor slabs**: point at the top of a building, block or room and click; the roof
+   fits itself, with a small overhang. Or choose a building and use **Add roof on top**.
+5. **Doors, windows, signs and ladders**: point at a wall and they fix themselves onto it.
+6. **Upper floors**: choose a building and press **Add a floor** (anything on its roof moves up too),
+   **Add stairs**, or **Stack copy on top**. Use ▲ / ▼ to work on Floor 1, 2 ... and tick
+   **Cut above** to hide everything higher so you can see inside.
+
+**Changing shapes**
+
+- Click a shape to choose it (Shift-click for more). Drag it to slide it along the ground.
+- **Move** (G), **Turn** (R) and **Size** (T) show coloured handles to drag. **Snap** keeps things on
+  the grid; pick the grid size next to it.
+- The **Properties** panel sets exact size, position, turn, floors, doors, windows, handrails and more,
+  plus colour, material (brick, blocks, tiles, iron sheet, glass, grass, tarmac...) and see-through.
+- Ctrl+Z / Ctrl+Y undo and redo, Ctrl+C / Ctrl+V copy and paste, Ctrl+D duplicates, Delete removes,
+  Page Up / Page Down raise and lower, H hides. **Objects** lists every shape, with Hide and Lock.
+- **Make this an access area** turns a shape into an area here in the Campus builder, so you can
+  choose who may enter it.
+
+**Brushes** (the **Tools** tab): **Paint ground**, **Rub out paint**, **Plant trees**, **Draw path**
+(footpath, road, hedge, fence or wall by hand), **Delete brush**, **Measure** and **Copy colour**.
+[ and ] change the brush size.
+
+**Map** tab: show or hide the site picture and the access areas, time of day, shadows (turn them off
+if the view is slow on an older PC), export and import the map as a file, and a sample school block.
+
+Press **Save** (Ctrl+S). The 3D view on **Overview** and **Find a person** then shows your drawn campus,
+and you can fly around it there too: right-drag to look and W A S D while the mouse is over the map.
+
 ### Restricted areas (who may enter)
 
 Select a building or zone and use **Who may enter**:

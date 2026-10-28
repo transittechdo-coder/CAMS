@@ -18,6 +18,7 @@ export const GUIDE = [
       "Draw each building, gate, field and parking area with the rectangle or shape tool. Give buildings their height and number of floors to see them in 3D.",
       "Arrange buildings with Turn left / Turn right / Duplicate, name every floor, and put each camera on its building and floor.",
       "Then click each camera in the list and click where it is mounted. Drag the amber handle so the cone points where the camera looks.",
+      "For a real 3D campus, press Open 3D Map Studio: draw buildings, rooms, walls, roofs, stairs, ladders and trees, stack them floor by floor, and fly around with the right mouse button and W A S D, or walk inside.",
       "Under Who may enter, set rules for any building or zone: only staff, everyone except Form 1, particular people, and closed hours. Areas with rules have a red dashed outline. CAMS alerts you when someone is seen where they are not allowed.",
     ],
   },
@@ -49,7 +50,7 @@ export const GUIDE = [
 
 const STEPS = [
   { sel: '.nav-btn[data-page="cameras"]', title: "1. Connect cameras", text: "Start here. Add IP, Ethernet, NVR or USB cameras, or let CAMS find them on your network." },
-  { sel: '.nav-btn[data-page="builder"]', title: "2. Draw your campus", text: "Draw buildings and gates, then put each camera on the map. You can view it in 3D too." },
+  { sel: '.nav-btn[data-page="builder"]', title: "2. Draw your campus", text: "Draw buildings and gates, then put each camera on the map. Open 3D Map Studio to draw the campus in 3D." },
   { sel: '.nav-btn[data-page="people"]', title: "3. Enrol people", text: "Add students and staff, record consent, and capture their faces from five angles." },
   { sel: '.nav-btn[data-page="find"]', title: "4. Find anyone", text: "Type a name to see where and when they were last seen, and their path on the map." },
   { sel: '.nav-btn[data-page="alerts"]', title: "5. Alerts", text: "Watch-list people, strangers in restricted areas and offline cameras show up here." },

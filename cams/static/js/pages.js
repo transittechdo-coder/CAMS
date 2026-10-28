@@ -519,7 +519,15 @@ const KINDS = { building: "Building", zone: "Zone / area", gate: "Gate", field: 
 async function builder(el) {
   const side = h("div", { class: "stack" });
   const mapBox = h("div");
-  el.append(head("Campus builder", "Draw your compound, then drag each camera to where it hangs and turn it to face the way it looks."),
+  const studioBtn = h("button", { class: "primary", onclick: async () => {
+    studioBtn.disabled = true;
+    try {
+      const { openStudio } = await import("./studio.js");
+      await openStudio({ onClose: async () => { await reload(); if (view.view3d) { view.view3d.reloadScene(); } } });
+    } catch (e) { fail(e); }
+    finally { studioBtn.disabled = false; }
+  } }, icon("builder"), "Open 3D Map Studio");
+  el.append(head("Campus builder", "Draw your compound, then drag each camera to where it hangs and turn it to face the way it looks. Use the 3D Map Studio to draw buildings, roofs, floors and stairs in 3D.", studioBtn),
     h("div", { class: "builder" }, mapBox, side));
   let selected = null;
   const view = new MapView(mapBox, {

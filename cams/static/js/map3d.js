@@ -2,7 +2,9 @@
 // Buildings are raised to their height (with floor lines), cameras are drawn
 // as small cones looking the way they face, and sightings stand as amber beams.
 import * as THREE from "three";
-import { OrbitControls } from "/static/vendor/OrbitControls.js";
+import { get } from "./util.js";
+import { buildWorld, disposeGroup, setupLights, fitSunShadow } from "./world3d.js";
+import { CameraRig } from "./camrig.js";
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
@@ -12,26 +14,36 @@ export class Campus3D {
   constructor(container) {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.5, 20000);
+    this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 20000);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = !/swiftshader|llvmpipe|software|basic render/i.test(rendererName(this.renderer));
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.append(this.renderer.domElement);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enableDamping = true;
-    this.controls.maxPolarAngle = Math.PI * 0.48;
-    this.groups = { ground: new THREE.Group(), buildings: new THREE.Group(), cameras: new THREE.Group(), marks: new THREE.Group() };
+    this.groups = { ground: new THREE.Group(), world: new THREE.Group(), buildings: new THREE.Group(), cameras: new THREE.Group(), marks: new THREE.Group() };
     Object.values(this.groups).forEach((g) => this.scene.add(g));
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-    sun.position.set(-200, 400, -150);
-    this.scene.add(sun);
+    this.sun = setupLights(this.scene);
+    const ray = new THREE.Raycaster();
+    // free camera: right-drag to look, W A S D to fly (while the mouse is over the map), left-drag to orbit
+    this.controls = new CameraRig(this.camera, this.renderer.domElement, {
+      leftOrbit: true,
+      pick: (cx, cy) => {
+        const r = this.renderer.domElement.getBoundingClientRect();
+        ray.setFromCamera(new THREE.Vector2(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1), this.camera);
+        const hit = ray.intersectObjects([this.groups.world, this.groups.ground], true).find((x) => !x.object.isSprite && !x.object.isLine);
+        return hit ? hit.point : null;
+      },
+    });
+    this.reloadScene();
     this._ro = new ResizeObserver(() => this._resize());
     this._ro.observe(container);
     this._resize();
     this._running = true;
     const loop = () => {
       if (!this._running) return;
-      this.controls.update();
+      const now = performance.now();
+      this.controls.update((now - (this._last || now)) / 1000);
+      this._last = now;
       this._t = (this._t || 0) + 0.03;
       this.groups.marks.children.forEach((m) => { if (m.userData.pulse) m.scale.setScalar(1 + 0.25 * Math.sin(this._t * 3)); });
       this.renderer.render(this.scene, this.camera);
@@ -43,6 +55,8 @@ export class Campus3D {
   destroy() {
     this._running = false;
     this._ro.disconnect();
+    this.controls.dispose();
+    disposeGroup(this.groups.world);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -69,19 +83,15 @@ export class Campus3D {
 
     // ground
     this._clear(this.groups.ground);
-    const groundMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(cssVar("--sheet")) });
+    const groundMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(cssVar("--sheet")), roughness: 1 });
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(W, H), groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(W / 2, 0, H / 2);
+    ground.receiveShadow = true;
     this.groups.ground.add(ground);
-    if (data.image) {
-      new THREE.TextureLoader().load(data.image, (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        groundMat.map = tex;
-        groundMat.color.set(0xffffff);
-        groundMat.needsUpdate = true;
-      });
-    }
+    this._groundMat = groundMat;
+    this._paintGround();
+    fitSunShadow(this.sun, W / 2, H / 2, Math.max(W, H));
     const grid = new THREE.GridHelper(Math.max(W, H), Math.round(Math.max(W, H) / 10), cssVar("--line"), cssVar("--line-2"));
     grid.position.set(Math.max(W, H) / 2, 0.02, Math.max(W, H) / 2);
     grid.material.transparent = true;
@@ -94,16 +104,17 @@ export class Campus3D {
     for (const b of data.buildings) {
       if (b.polygon.length < 3) continue;
       const shape = new THREE.Shape(b.polygon.map(([x, y]) => new THREE.Vector2(x, -y)));
-      const flat = b.kind !== "building";
+      const flat = b.kind !== "building" || this._hasWorld;
       const height = flat ? 0.15 : Math.max(1, b.height_m || 6);
       const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: flat ? 0.45 : 0.82 });
+      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: this._hasWorld ? 0.22 : flat ? 0.45 : 0.82, depthWrite: !this._hasWorld });
       const mesh = new THREE.Mesh(geo, mat);
       this.groups.buildings.add(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: edgeColor }));
       this.groups.buildings.add(edges);
       // floor lines
+      if (this._hasWorld) { this.groups.buildings.add(this._label(b.name, ...centerOf(b.polygon), 2)); continue; }
       if (!flat && b.floors > 1) {
         for (let f = 1; f < b.floors; f++) {
           const y = (height / b.floors) * f;
@@ -140,10 +151,41 @@ export class Campus3D {
     if (!this._framed) {
       this._framed = true;
       const span = Math.max(W, H);
-      this.controls.target.set(W / 2, 0, H / 2);
-      this.camera.position.set(W / 2 - span * 0.35, span * 0.75, H / 2 + span * 0.85);
-      this.controls.update();
+      const v = this._scene?.view;
+      if (v?.pos && !this._usedView) { this._usedView = true; this.camera.position.fromArray(v.pos); this.controls.yaw = v.yaw; this.controls.pitch = v.pitch; this.controls._apply(); }
+      else this.controls.lookAt(new THREE.Vector3(W / 2 - span * 0.35, span * 0.75, H / 2 + span * 0.85), new THREE.Vector3(W / 2, 0, H / 2));
     }
+  }
+
+  // The 3D world drawn in Map Studio (buildings, roofs, stairs, trees, paint...)
+  async reloadScene() {
+    try { this._scene = await get("/api/map/scene"); } catch { this._scene = null; }
+    if (!this._running) return;
+    for (const c of [...this.groups.world.children]) { this.groups.world.remove(c); disposeGroup(c); }
+    const w = buildWorld(this._scene);
+    this._hasWorld = w.children.length > 0;
+    for (const c of [...w.children]) this.groups.world.add(c);
+    this._paintImg = null;
+    if (this._scene?.paint) { const im = new Image(); im.onload = () => { this._paintImg = im; this._paintGround(); }; im.src = this._scene.paint; }
+    if (this.data) { if (this._scene?.view?.pos && !this._usedView) this._framed = false; this.setData(this.data); }
+  }
+
+  _paintGround() {
+    const mat = this._groundMat, data = this.data;
+    if (!mat || !data) return;
+    const showImage = this._scene?.settings?.showImage !== false;
+    const draw = (img) => {
+      const W = 2048, H = Math.max(256, Math.round((2048 * data.height_m) / data.width_m));
+      const c = Object.assign(document.createElement("canvas"), { width: W, height: H });
+      const g = c.getContext("2d");
+      g.fillStyle = this._hasWorld ? "#dfe7d8" : cssVar("--sheet"); g.fillRect(0, 0, W, H);
+      if (img) g.drawImage(img, 0, 0, W, H);
+      if (this._paintImg) g.drawImage(this._paintImg, 0, 0, W, H);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+      mat.map?.dispose(); mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true;
+    };
+    if (data.image && showImage) { const im = new Image(); im.onload = () => draw(im); im.onerror = () => draw(null); im.src = data.image; }
+    else if (this._paintImg || this._hasWorld) draw(null);
   }
 
   setMarks({ pins = [], trail = [] } = {}) {
@@ -198,4 +240,8 @@ function centerOf(poly) {
   let x = 0, y = 0;
   for (const p of poly) { x += p[0]; y += p[1]; }
   return [x / poly.length, y / poly.length];
+}
+
+function rendererName(r) {
+  try { const gl = r.getContext(), e = gl.getExtension("WEBGL_debug_renderer_info"); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : ""; } catch { return ""; }
 }

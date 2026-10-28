@@ -340,3 +340,82 @@ button > svg, .btn > svg { width: 16px; height: 16px; stroke: currentColor; fill
 .floors { display: grid; gap: 6px; }
 .floors .row input { flex: 1; }
 .row > input[type="time"], .row > input[type="number"] { width: auto; flex: none; }
+
+/* ------------------------------------------------------------ Map Studio (3D map editor) */
+body.studio-open { overflow: hidden; }
+.studio {
+  position: fixed; inset: 0; z-index: 50; background: var(--paper); color: var(--ink);
+  display: grid; grid-template-columns: 236px minmax(0, 1fr) 300px; grid-template-rows: auto minmax(0, 1fr) 28px;
+  grid-template-areas: "top top top" "left view right" "status status status";
+}
+.toasts { z-index: 80; }
+.st-top { grid-area: top; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 12px; background: var(--sheet); border-bottom: 1px solid var(--line); }
+.st-brand { display: flex; align-items: center; gap: 8px; font: 600 16px var(--display); }
+.st-mark { width: 26px; height: 26px; color: var(--ink); }
+.st-group { display: flex; align-items: center; gap: 6px; padding-left: 12px; border-left: 1px solid var(--line-2); }
+.st-group select { padding: 3px 6px; font-size: 13px; }
+.st-group .num { min-width: 52px; text-align: center; font-size: 13px; }
+.st-end { margin-left: auto; border-left: 0; }
+.st-speed { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.st-speed input { width: 70px; }
+.st-top .seg button { padding: 4px 11px; font-size: 13px; }
+.st-top button[aria-pressed="true"] { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+
+.st-left, .st-right { background: var(--sheet); overflow-y: auto; display: flex; flex-direction: column; min-height: 0; }
+.st-left { grid-area: left; border-right: 1px solid var(--line); }
+.st-right { grid-area: right; border-left: 1px solid var(--line); }
+.st-tabs { display: flex; flex-wrap: wrap; gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--sheet); z-index: 1; }
+.st-tabs button { border: 0; border-radius: 6px 6px 0 0; padding: 6px 9px; font-size: 12.5px; background: none; color: var(--ink-2); }
+.st-tabs button[aria-selected="true"] { background: var(--teal-soft); color: var(--ink); font-weight: 600; }
+.st-palette { padding: 8px; }
+.st-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.st-item { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px 6px; font-size: 11px; line-height: 1.2; text-align: center; border-radius: 8px; background: var(--paper); }
+.st-item img { width: 56px; height: 56px; object-fit: contain; }
+.st-item img:not([src]) { visibility: hidden; }
+.st-item .st-ic { font-size: 26px; line-height: 56px; height: 56px; }
+.st-item[aria-pressed="true"] { border-color: var(--teal); background: var(--teal-soft); box-shadow: inset 0 0 0 1px var(--teal); }
+.st-brush { padding: 8px 10px; display: grid; gap: 8px; border-top: 1px solid var(--line-2); }
+.st-colours { padding: 10px; margin-top: auto; border-top: 1px solid var(--line-2); display: grid; gap: 8px; }
+.st-colours .swatches { flex-wrap: wrap; gap: 5px; }
+.st-colours .swatches button { width: 22px; height: 22px; border: 1px solid rgba(0,0,0,.18); }
+.st-colours .swatches button[aria-pressed="true"] { outline: 2px solid var(--amber); outline-offset: 1px; }
+.st-colours .swatches .auto { background: var(--paper); font-size: 11px; font-weight: 700; }
+.st-colours input[type="color"] { width: 26px; height: 24px; padding: 0; border: 0; background: none; }
+
+.st-view { grid-area: view; position: relative; min-width: 0; min-height: 0; overflow: hidden; background: #cfe3ee; }
+.st-view canvas { display: block; outline: none; }
+.st-hint { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); max-width: min(720px, 90%); padding: 7px 14px; border-radius: 999px;
+  background: rgba(14, 29, 45, 0.82); color: #f1f6f8; font-size: 13px; text-align: center; pointer-events: none; }
+
+.st-props { padding: 12px; display: grid; gap: 12px; }
+.st-props h3 { font-size: 15px; }
+.st-props h4 { font: 600 12px var(--body); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); margin: 0 0 6px; }
+.st-head { display: flex; gap: 10px; align-items: center; }
+.st-head img { width: 48px; height: 48px; border-radius: 8px; background: var(--paper); flex: none; }
+.st-head img:not([src]) { visibility: hidden; }
+.st-head input { font-weight: 600; width: 100%; }
+.st-sec { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+.st-grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.st-num { display: grid; gap: 2px; font-size: 11.5px; color: var(--ink-2); }
+.st-num input { width: 100%; padding: 4px 6px; font-size: 13px; }
+.st-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.st-actions select { font-size: 13px; padding: 3px 6px; }
+.st-empty p { font-size: 13.5px; color: var(--ink-2); }
+.st-keys { display: grid; gap: 6px; font-size: 13px; margin-top: 8px; }
+.st-keys kbd, .st-help kbd { display: inline-block; min-width: 92px; font: 600 12px var(--body); color: var(--ink); }
+.st-list { display: grid; gap: 2px; max-height: 55vh; overflow-y: auto; }
+.st-row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.st-row.on { background: var(--teal-soft); }
+.st-row .name { flex: 1; text-align: left; font-size: 13px; padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st-row .name small { color: var(--ink-3); }
+.st-row button.small { font-size: 11.5px; padding: 2px 6px; }
+.st-help { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.st-help th { text-align: left; padding: 6px 12px 6px 0; width: 34%; vertical-align: top; }
+.st-help td { padding: 6px 0; color: var(--ink-2); border-bottom: 1px solid var(--line-2); }
+.st-status { grid-area: status; display: flex; gap: 22px; align-items: center; padding: 0 12px; font-size: 12px; color: var(--ink-2); background: var(--sheet); border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
+.st-status .pos { font-variant-numeric: tabular-nums; min-width: 250px; }
+
+@media (max-width: 1100px) {
+  .studio { grid-template-columns: 200px minmax(0, 1fr) 250px; }
+  .st-items { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

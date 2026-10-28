@@ -878,6 +878,41 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             raise HTTPException(404, "No map image uploaded.")
         return FileResponse(p)
 
+    # 3D map drawn in Map Studio: a JSON document of shapes, roofs, stairs, paint...
+    SCENE_MAX = 30 * 1024 * 1024
+
+    @app.get("/api/map/scene")
+    def get_scene(user=viewer):
+        p = paths.maps / "scene.json"
+        if not p.is_file():
+            return {"version": 1, "objects": [], "paint": None}
+        return FileResponse(p, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+    @app.put("/api/map/scene")
+    async def set_scene(request: Request, user=operator):
+        raw = await request.body()
+        if len(raw) > SCENE_MAX:
+            raise HTTPException(413, "The map is too large to save (max 30 MB). Clear some ground paint.")
+        try:
+            doc = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, "The map data is not valid.")
+        if not isinstance(doc, dict) or not isinstance(doc.get("objects"), list):
+            raise HTTPException(400, "The map data is not valid.")
+        if len(doc["objects"]) > 50000:
+            raise HTTPException(400, "Too many objects (max 50000).")
+        if any(not isinstance(o, dict) or not isinstance(o.get("type"), str) for o in doc["objects"]):
+            raise HTTPException(400, "The map data is not valid.")
+        paint = doc.get("paint")
+        if paint is not None and not (isinstance(paint, str) and paint.startswith("data:image/png;base64,")):
+            raise HTTPException(400, "Ground paint must be a PNG image.")
+        target = paths.maps / "scene.json"
+        tmp = target.with_suffix(".tmp")
+        tmp.write_bytes(raw)
+        tmp.replace(target)
+        db.audit(user["username"], "map_scene_save", {"objects": len(doc["objects"])})
+        return {"ok": True, "objects": len(doc["objects"])}
+
     def _check_building(body: BuildingIn):
         if len(body.polygon) < 3 or any(len(pt) != 2 for pt in body.polygon):
             raise HTTPException(400, "A shape needs at least 3 corner points.")

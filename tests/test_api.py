@@ -280,3 +280,16 @@ def test_old_database_is_upgraded(tmp_path):
     db = Database(p)
     row = db.one("SELECT * FROM buildings")
     assert row["access_mode"] == "everyone" and row["floor_names"] == "[]"
+
+
+def test_map_scene_roundtrip(admin):
+    client = admin
+    r = client.get("/api/map/scene")
+    assert r.status_code == 200 and r.json()["objects"] == []
+    doc = {"version": 1, "objects": [{"id": "o1", "type": "building", "pos": [10, 0, 10], "size": [20, 6.4, 10], "props": {"floors": 2}},
+                                     {"id": "o2", "type": "roofHip", "pos": [10, 6.4, 10], "size": [21, 2.5, 11]}], "paint": None}
+    assert client.put("/api/map/scene", json=doc).json()["objects"] == 2
+    got = client.get("/api/map/scene").json()
+    assert [o["type"] for o in got["objects"]] == ["building", "roofHip"]
+    assert client.put("/api/map/scene", json={"objects": "nope"}).status_code == 400
+    assert client.put("/api/map/scene", json={"objects": [], "paint": "javascript:x"}).status_code == 400
