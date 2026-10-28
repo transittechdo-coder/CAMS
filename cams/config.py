@@ -98,6 +98,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "save_snapshots": "1",
     # Number of recognition worker threads (0 = automatic).
     "workers": "0",
+    # Activity AI: follow what each recognised person is doing (1 = on).
+    "activity_ai": "1",
+    # When the daily summary and "changes from usual" notes are written.
+    "daily_summary_time": "20:30",
     "onboarding_done": "0",
     "map_mode": "2d",
 }

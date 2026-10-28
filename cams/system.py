@@ -24,6 +24,8 @@ import numpy as np
 import json
 
 from .activity import ActivityMonitor, PersonDetector, in_hours, parse_analytics
+from .behaviour import BehaviourEngine
+from .insights import Insights
 from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
@@ -64,6 +66,9 @@ class CamsSystem:
         self.camera_rules: dict[int, dict] = {}
         self.reload_gallery()
         self._start_cameras = start_cameras
+        # activity AI: timelines of what each recognised person is doing
+        self.behaviour = BehaviourEngine(self.db, paths, paths.models) if self.activity_ok else None
+        self.insights = Insights(self)
 
     # ================================================================ lifecycle
     def start(self) -> None:
@@ -263,7 +268,12 @@ class CamsSystem:
         faces = engine.analyse(frame)
         rules = self.camera_rules.get(worker.id) or parse_analytics(None)
         detector = getattr(engine, "person_detector", None)
-        people = detector.detect(frame) if detector and rules.get("people", True) else []
+        watch = self.behaviour is not None and self.setting("activity_ai") != "0"
+        objects: list = []
+        if detector and (rules.get("people", True) or watch):
+            people, objects = detector.detect_scene(frame, objects=watch)
+        else:
+            people = []
         self.stats["people_detected"] += len(people)
         mon = self.monitors.setdefault(worker.id, ActivityMonitor())
         closed = next((a["closed_hours"] for a in self.camera_areas.get(worker.id, []) if a.get("closed_hours")), "")
@@ -283,6 +293,13 @@ class CamsSystem:
                 "watch": bool(person and person["alert_on_sight"]),
             })
             self._record(worker, frame, f, ts)
+        if watch and people:
+            try:
+                tracks = [t for t in mon.tracker.tracks.values() if t.last_seen == ts]
+                self.behaviour.observe({"id": worker.id, "name": worker.state.name}, frame, ts, tracks, faces, objects,
+                                       self.camera_areas.get(worker.id, []), people)
+            except Exception:
+                log.exception("Activity AI failed on camera %s", worker.id)
         worker.state.overlays = overlays
         worker.state.people = [list(p[:4]) for p in people]
         worker.state.overlays_at = time.time()
@@ -421,12 +438,20 @@ class CamsSystem:
         cutoff = time.time() - days * 86400
         old = self.db.query("SELECT snapshot_path FROM sightings WHERE last_seen < ? AND snapshot_path IS NOT NULL", (cutoff,))
         old += self.db.query("SELECT snapshot_path FROM alerts WHERE created_at < ? AND snapshot_path IS NOT NULL", (cutoff,))
+        # activity pictures go too, except those the admin used to teach the AI
+        teaching = {r["image_path"] for r in self.db.query("SELECT image_path FROM activity_examples WHERE label IS NOT NULL AND image_path IS NOT NULL")}
+        old += [r for r in self.db.query("SELECT image_path AS snapshot_path FROM activity_log WHERE end_ts < ? AND image_path IS NOT NULL", (cutoff,))
+                if r["snapshot_path"] not in teaching]
+        old += self.db.query("SELECT image_path AS snapshot_path FROM activity_examples WHERE ts < ? AND label IS NULL AND image_path IS NOT NULL", (cutoff,))
         for r in old:
             try:
                 (self.paths.snapshots / r["snapshot_path"]).unlink(missing_ok=True)
             except OSError:
                 pass
         n = self.db.execute("DELETE FROM sightings WHERE last_seen < ?", (cutoff,))
+        self.db.execute("DELETE FROM activity_log WHERE end_ts < ?", (cutoff,))
+        self.db.execute("DELETE FROM activity_examples WHERE ts < ? AND label IS NULL", (cutoff,))
+        self.db.execute("DELETE FROM person_notes WHERE ts < ?", (cutoff,))
         self.db.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
         # remove empty day folders
         for d in self.paths.snapshots.glob("*"):
@@ -436,8 +461,15 @@ class CamsSystem:
 
     def _maintenance_loop(self) -> None:
         last_purge = 0.0
+        last_routines = 0.0
         while not self._stop.wait(10):
             now = time.time()
+            if now - last_routines >= 55:
+                last_routines = now
+                try:
+                    self.insights.run_due()
+                except Exception:
+                    log.exception("Routine check failed")
             for w in list(self.cameras.values()):
                 st = w.state
                 if st.status == "offline" and st.offline_since and not st.offline_alerted \

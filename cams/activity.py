@@ -29,6 +29,9 @@ import numpy as np
 NANODET_FILE = "object_detection_nanodet_2022nov.onnx"
 INPUT = 416
 PERSON = 0
+# COCO classes that tell us what someone is doing (see behaviour.py)
+OBJECT_CLASSES = {1, 13, 24, 25, 26, 28, 29, 32, 34, 35, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
+                  54, 55, 56, 57, 59, 60, 62, 63, 64, 65, 66, 67, 71, 73, 76, 79}
 
 DEFAULT_ANALYTICS = {
     "people": True,          # run person detection on this camera
@@ -95,6 +98,14 @@ class PersonDetector:
         return (Path(models_dir) / NANODET_FILE).is_file()
 
     def detect(self, frame: np.ndarray) -> list[tuple[int, int, int, int, float]]:
+        return self.detect_scene(frame, objects=False)[0]
+
+    def detect_scene(self, frame: np.ndarray, objects: bool = True, object_threshold: float = 0.35):
+        """People, plus everyday objects near them (cups, plates, books, phones, balls...).
+
+        Returns (people, objects); people are (x, y, w, h, score) and objects
+        (x, y, w, h, score, coco_class). One forward pass of the network.
+        """
         h, w = frame.shape[:2]
         scale = INPUT / max(h, w)
         nh, nw = int(round(h * scale)), int(round(w * scale))
@@ -107,14 +118,23 @@ class PersonDetector:
         # Output order differs between OpenCV versions: sort by kind and grid size.
         cls_outs = sorted((o for o in outs if o.shape[-1] == 80), key=lambda o: -o.shape[-2])
         box_outs = sorted((o for o in outs if o.shape[-1] == 4 * (self.reg_max + 1)), key=lambda o: -o.shape[-2])
-        boxes, scores = [], []
+        pboxes, pscores, oboxes, oscores, oclasses = [], [], [], [], []
+        obj_cols = np.array(sorted(OBJECT_CLASSES), dtype=int)
         for stride, cls, reg, anchors in zip(self.strides, cls_outs, box_outs, self.anchors):
             cls = cls.reshape(-1, cls.shape[-1])
             if len(anchors) != len(cls):
                 continue
             reg = reg.reshape(-1, 4 * (self.reg_max + 1))
             person = cls[:, PERSON]
-            keep = person > self.threshold * 0.8
+            keep_p = person > self.threshold * 0.8
+            if objects:
+                obj = cls[:, obj_cols]
+                best = obj.argmax(axis=1)
+                best_score = obj[np.arange(len(obj)), best]
+                keep_o = best_score > object_threshold
+            else:
+                keep_o = np.zeros(len(cls), bool)
+            keep = keep_p | keep_o
             if not keep.any():
                 continue
             r = reg[keep].reshape(-1, self.reg_max + 1)
@@ -123,23 +143,38 @@ class PersonDetector:
             a = anchors[keep]
             x1, y1 = a[:, 0] - dist[:, 0], a[:, 1] - dist[:, 1]
             x2, y2 = a[:, 0] + dist[:, 2], a[:, 1] + dist[:, 3]
-            boxes.append(np.column_stack((x1, y1, x2 - x1, y2 - y1)))
-            scores.append(person[keep])
-        if not boxes:
-            return []
-        boxes = np.concatenate(boxes)
-        scores = np.concatenate(scores)
-        idx = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), self.threshold, 0.5)
-        out = []
-        for i in np.array(idx).reshape(-1):
-            x, y, bw, bh = boxes[i]
+            bx = np.column_stack((x1, y1, x2 - x1, y2 - y1))
+            kp, ko = keep_p[keep], keep_o[keep]
+            if kp.any():
+                pboxes.append(bx[kp]); pscores.append(person[keep][kp])
+            if ko.any():
+                oboxes.append(bx[ko]); oscores.append(best_score[keep][ko]); oclasses.append(obj_cols[best[keep][ko]])
+
+        def unpad(x, y, bw, bh):
             x0 = max(0, int((x - left) / scale))
             y0 = max(0, int((y - top) / scale))
             x1 = min(w, int((x + bw - left) / scale))
             y1 = min(h, int((y + bh - top) / scale))
-            if x1 - x0 > 8 and y1 - y0 > 16:
-                out.append((x0, y0, x1 - x0, y1 - y0, float(scores[i])))
-        return out
+            return x0, y0, x1 - x0, y1 - y0
+
+        people = []
+        if pboxes:
+            boxes, scores = np.concatenate(pboxes), np.concatenate(pscores)
+            idx = cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), self.threshold, 0.5)
+            for i in np.array(idx).reshape(-1):
+                x0, y0, bw, bh = unpad(*boxes[i])
+                if bw > 8 and bh > 16:
+                    people.append((x0, y0, bw, bh, float(scores[i])))
+        found = []
+        if oboxes:
+            boxes, scores, classes = np.concatenate(oboxes), np.concatenate(oscores), np.concatenate(oclasses)
+            idx = cv2.dnn.NMSBoxesBatched(boxes.tolist(), scores.tolist(), classes.tolist(), object_threshold, 0.5) \
+                if hasattr(cv2.dnn, "NMSBoxesBatched") else cv2.dnn.NMSBoxes(boxes.tolist(), scores.tolist(), object_threshold, 0.5)
+            for i in np.array(idx).reshape(-1)[:40]:
+                x0, y0, bw, bh = unpad(*boxes[i])
+                if bw > 3 and bh > 3:
+                    found.append((x0, y0, bw, bh, float(scores[i]), int(classes[i])))
+        return people, found
 
 
 # ====================================================================== tracker

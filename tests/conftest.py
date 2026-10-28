@@ -13,6 +13,7 @@ SAMPLES = {
     # Public OpenCV sample images used only for automated tests.
     "face.jpg": "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/lena.jpg",
     "video.avi": "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/vtest.avi",
+    "player.jpg": "https://raw.githubusercontent.com/opencv/opencv/4.x/samples/data/messi5.jpg",
 }
 
 

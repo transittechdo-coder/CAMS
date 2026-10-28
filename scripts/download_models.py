@@ -1,4 +1,4 @@
-"""Download the AI models CAMS needs: face detection, face recognition and person detection (about 43 MB, once).
+"""Download the AI models CAMS needs: face detection, face recognition, person and object detection, and body pose (about 49 MB, once).
 
     python scripts/download_models.py
 
@@ -22,6 +22,11 @@ MODELS = {
     "face_recognition_sface_2021dec.onnx": (
         f"{BASE}/face_recognition_sface/face_recognition_sface_2021dec.onnx",
         "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79",
+    ),
+    # body pose for the activity AI (MediaPipe Pose, 33 body points)
+    "pose_estimation_mediapipe_2023mar.onnx": (
+        f"{BASE}/pose_estimation_mediapipe/pose_estimation_mediapipe_2023mar.onnx",
+        "9d89c599319a18fb7d2e28451a883476164543182bafca5f09eb2cf767ed2f3f",
     ),
     # person detection for suspicious-activity rules (NanoDet-Plus, COCO)
     "object_detection_nanodet_2022nov.onnx": (

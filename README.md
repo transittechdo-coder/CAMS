@@ -51,6 +51,8 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
 | **Faces from every side** | Nine views per person: front, half left, left, half right, right, up, down, back, top. Webcam wizard, any CAMS camera, photos, or a turn-around video. |
 | **Campus builder** | Draw buildings, gates, fields, parking and zones on a plan or satellite picture. Turn, move and copy them, add and name floors, place and aim every camera. |
 | **3D Map Studio** | Draw the campus in 3D like a game level editor: free fly camera and walk mode, 50+ shapes, buildings with floors, rooms, walls with doors and windows, stairs, ladders, self-fitting roofs, stacking, floor-by-floor cut view, ground paint, tree and path brushes, undo, export. |
+| **Activity timeline** | An on-device AI (body pose + objects + movement + place) writes what every recognised person is doing into their profile: eating, sitting, walking, reading, using a phone, playing sport... Teach it your own activities from example pictures, add place & time rules. |
+| **Routines & daily report** | Set where people should be (Lunch in the dining hall 13:00–13:45). CAMS notes who kept it, came late or missed it and where they were instead, learns each person's usual pattern, flags changes, and writes a daily report (print / CSV). **Ask CAMS** answers questions like *Who missed lunch today?* offline. |
 | **Restricted areas** | Per building or zone: only some people may enter (by type, class or name), or some may not, and closed hours. |
 | **Unusual situations** | A person-detection AI flags loitering, crowds, running, people present during closed hours, and cameras that are covered, blurred or turned away. |
 | **Alerts** | Rule breaks, watch-list people, strangers on restricted cameras, unusual situations and offline cameras, each with a picture. |
@@ -64,6 +66,9 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
   <tr>
     <td width="50%"><img src="docs/images/live-cameras.png" alt="Live camera wall"><br><sub><b>Live cameras</b> with online and offline status</sub></td>
     <td width="50%"><img src="docs/images/alerts.png" alt="Alerts with scene pictures"><br><sub><b>Alerts</b> for crowds, running and offline cameras</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/daily-report.png" alt="Daily report with Ask CAMS answering who missed lunch"><br><sub><b>Daily report and Ask CAMS</b>: routines kept, late or missed, with written notes</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/images/map-studio.png" alt="3D Map Studio with a classroom block, hip roof and roof shapes"><br><sub><b>3D Map Studio</b>: draw buildings, roofs, floors, stairs and trees, then fly or walk through them</sub></td>

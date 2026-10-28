@@ -124,6 +124,13 @@ if the view is slow on an older PC), export and import the map as a file, and a 
 Press **Save** (Ctrl+S). The 3D view on **Overview** and **Find a person** then shows your drawn campus,
 and you can fly around it there too: right-drag to look and W A S D while the mouse is over the map.
 
+### What each part of the map is used for
+
+Select an area in the Campus builder and choose **Used for** (Dining hall, Classroom, Library,
+Dormitory, Sports ground, Chapel / mosque, Assembly, Office, Gate...). The activity AI and the
+routines use this. If you leave it empty, CAMS guesses from the name ("Dining Hall", "DH",
+"Form 5 class", "Library", "Dorm"...).
+
 ### Restricted areas (who may enter)
 
 Select a building or zone and use **Who may enter**:
@@ -211,3 +218,85 @@ step needs administrator rights). Other PCs then open `http://CAMS-PC-IP:8765` i
 | Forgot the admin password | Another admin can set a new one in Settings, Users. |
 
 Your data is stored in `%APPDATA%\CAMS`. Uninstalling CAMS does not delete it.
+
+
+## Activity timeline, routines and the daily report
+
+CAMS writes a **timeline** for every person it recognises: what they were doing, where and when,
+for example *8:00 AM – 10:00 AM Sitting, Form 5 PCM class*. Open a person (People page) and scroll to
+**Day timeline**. Use ‹ › to look at other days.
+
+**How it knows what someone is doing.** When a camera recognises a face, CAMS keeps following that
+person's body even when they turn away. About every 2 seconds it looks at:
+
+- the **body** (a pose AI finds 33 body points): sitting or standing, lying down, a hand at the mouth,
+  a hand raised, head down over a book;
+- **things** near the person or in their hands: plates, cups, spoons, food, books, phones, laptops,
+  balls, chairs, beds, tables;
+- **movement**: walking or running;
+- the **place** and what it is used for.
+
+Built-in activities: eating or drinking, sitting, standing, walking, running, lying down, sleeping
+or resting, reading or writing, using a phone, using a computer, playing sport, raising a hand, with
+a group. Everything runs on the PC.
+
+### Teach CAMS your own activities
+
+Open **Activity & routines → Teach the AI**.
+
+1. Type a new activity (for example *Sweeping*, *Praying*, *Queueing for food*) and press **Add activity**.
+2. Below are the pictures CAMS took. For each one choose what the person is really doing, or press
+   **Correct ✓** when the AI was right. **Remove** throws away a picture that is not useful.
+3. After **3 examples** of an activity CAMS starts recognising it by itself, and it gets better with
+   every example.
+
+You can also press **Correct** on any entry in a person's Day timeline. Your answer fixes the entry and
+teaches the AI at the same time.
+
+### Place & time rules
+
+Some activities cannot be seen from the body alone. In **Place & time rules** say, for example, *in
+the Chapel from 07:00 to 07:30 on weekdays = Morning prayers*, or *in any Library from 19:30 to
+21:00, sitting = Evening prep*. Rules win over the AI.
+
+### Routines (where people should be)
+
+In **Activity & routines → Routines**, press **Add routine** or a **Quick start** button:
+
+- **Name, From, Until, Days**: e.g. *Lunch, 13:00 to 13:45, Monday to Friday*.
+- **Place**: any place of a kind (all dining halls) or particular areas.
+- **People should be there** (note who missed it or came late), or **NOT be there**
+  (e.g. not in the dormitory during lessons).
+- **Who**: types of people and classes. Leave empty for everyone.
+- **Late after**: minutes before someone counts as late.
+- Tick **Also raise an alert** to get an alert as well as a note.
+
+A couple of minutes after a routine ends, CAMS writes a note on each person's timeline, for example:
+
+> *Godwill did not go to the Dining Hall during Lunch (1:00–1:45 PM). Godwill was seen in the Library at 1:05–1:45 PM, reading or writing.*
+
+Only people a camera saw that day are checked, so someone who stayed at home is not marked as
+missing lunch. *Not seen in the dining hall* can also mean no camera saw them there: put cameras at
+the doors of places you check, and look before acting on a note.
+
+### Habits and changes from usual
+
+Each person's page shows their **usual pattern** for the last 3 weeks: when they usually arrive and
+leave, where they spend most time, what they usually do, and how often they keep each routine.
+Every evening (20:30, change it in **Activity & routines → How it works**) CAMS writes a summary of the
+day and notes **changes from usual**, such as arriving much later than usual, spending far more
+time than usual on one activity, a place they have not been in for weeks, or missing the same routine
+3 times in a week. These notes describe what cameras saw, never judgements about character.
+
+### Daily report and Ask CAMS
+
+Open **Daily report**: for the chosen day it lists each person with first and last seen, where they
+were, what they did, routines kept, late or missed, and notes. Filter by type or class, **Print** it
+or **Download CSV** for Excel. **Write notes now** checks finished routines and writes the summaries
+straight away.
+
+At the top, **Ask CAMS** answers questions typed in plain English, offline:
+
+- *Who missed lunch today?* · *Who was late today?* · *Who was not seen today?*
+- *Where was Godwill at 8:00 AM?* · *What was Godwill doing at 10:30 yesterday?*
+- *Who was in the library this afternoon?* · *Who was using a phone today?* · *Godwill today*

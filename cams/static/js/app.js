@@ -13,6 +13,8 @@ const NAV = [
   { id: "people", label: "People", icon: "people" },
   { id: "builder", label: "Campus builder", icon: "builder", role: "operator" },
   { id: "cameras", label: "Cameras", icon: "cameras", role: "operator" },
+  { id: "activity", label: "Activity & routines", icon: "activity", role: "operator" },
+  { id: "report", label: "Daily report", icon: "report" },
   { id: "alerts", label: "Alerts", icon: "alerts" },
   { id: "settings", label: "Settings", icon: "settings" },
   { id: "guide", label: "How to use CAMS", icon: "guide" },

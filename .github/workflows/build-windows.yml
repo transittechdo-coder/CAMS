@@ -109,13 +109,13 @@ jobs:
               try {
                 $run = Get-Content (Join-Path $env:APPDATA "CAMS\running.json") -ErrorAction Stop | ConvertFrom-Json
                 $r = Invoke-RestMethod "http://127.0.0.1:$($run.port)/api/status"
-                if ($r.app -eq "CAMS" -and $r.models_ok -and $r.needs_setup) { $ok = $true; break }
+                if ($r.app -eq "CAMS" -and $r.models_ok -and $r.needs_setup -and $r.activity_ai.pose) { $ok = $true; break }
               } catch {}
             }
             Get-Process CAMS -ErrorAction SilentlyContinue | Stop-Process -Force
             Start-Sleep -Seconds 2
             if (-not $ok) { Fail "CAMS did not start from the desktop icon" }
-            Write-Host "Opened from the desktop icon: AI models loaded, first-run setup screen ready."
+            Write-Host "Opened from the desktop icon: face, object and body-pose AI loaded, first-run setup screen ready."
 
             # Check the CAMS window itself shows the screens
             $p = Start-Process -FilePath $exe -ArgumentList "--check-window" -Wait -PassThru

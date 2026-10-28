@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import DEFAULT_SETTINGS
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -145,6 +145,87 @@ CREATE TABLE IF NOT EXISTS reference_photos (
 );
 CREATE INDEX IF NOT EXISTS idx_refphotos_person ON reference_photos(person_id);
 
+-- Activity AI ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS activity_log (            -- a person's timeline
+    id          INTEGER PRIMARY KEY,
+    person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    camera_id   INTEGER REFERENCES cameras(id) ON DELETE SET NULL,
+    camera_name TEXT NOT NULL DEFAULT '',
+    area_id     INTEGER,
+    area_name   TEXT NOT NULL DEFAULT '',
+    activity    TEXT NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'ai',        -- ai | taught | rule | corrected
+    confidence  REAL NOT NULL DEFAULT 0,
+    start_ts    REAL NOT NULL,
+    end_ts      REAL NOT NULL,
+    samples     INTEGER NOT NULL DEFAULT 1,
+    image_path  TEXT,
+    example_id  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_actlog_person ON activity_log(person_id, start_ts);
+CREATE INDEX IF NOT EXISTS idx_actlog_time ON activity_log(start_ts);
+
+CREATE TABLE IF NOT EXISTS activity_examples (       -- what the AI saw; labelled ones teach it
+    id         INTEGER PRIMARY KEY,
+    ts         REAL NOT NULL,
+    camera_id  INTEGER,
+    person_id  INTEGER REFERENCES people(id) ON DELETE CASCADE,
+    features   TEXT NOT NULL,
+    auto_label TEXT NOT NULL DEFAULT '',
+    label      TEXT,
+    image_path TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_actex_label ON activity_examples(label);
+
+CREATE TABLE IF NOT EXISTS activity_types (          -- activities the admin added
+    id         INTEGER PRIMARY KEY,
+    key        TEXT NOT NULL UNIQUE,
+    label      TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS activity_rules (          -- "in this place at this time = this activity"
+    id       INTEGER PRIMARY KEY,
+    activity TEXT NOT NULL,
+    area_ids TEXT NOT NULL DEFAULT '[]',
+    purpose  TEXT NOT NULL DEFAULT '',
+    start    TEXT NOT NULL,
+    end      TEXT NOT NULL,
+    days     TEXT NOT NULL DEFAULT '[]',
+    body     TEXT NOT NULL DEFAULT 'any',
+    enabled  INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS routines (                -- where people are expected to be, and when
+    id             INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    start          TEXT NOT NULL,
+    end            TEXT NOT NULL,
+    days           TEXT NOT NULL DEFAULT '[0,1,2,3,4]',
+    area_ids       TEXT NOT NULL DEFAULT '[]',
+    purpose        TEXT NOT NULL DEFAULT '',
+    expect         TEXT NOT NULL DEFAULT 'present',   -- present | absent
+    who_categories TEXT NOT NULL DEFAULT '[]',
+    who_groups     TEXT NOT NULL DEFAULT '[]',
+    who_people     TEXT NOT NULL DEFAULT '[]',
+    grace_min      INTEGER NOT NULL DEFAULT 10,
+    alert          INTEGER NOT NULL DEFAULT 0,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    checked_day    TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS person_notes (            -- written observations on a profile
+    id         INTEGER PRIMARY KEY,
+    person_id  INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    day        TEXT NOT NULL,
+    ts         REAL NOT NULL,
+    kind       TEXT NOT NULL,         -- attended | late | missed | out_of_place | not_seen | change | summary
+    routine_id INTEGER,
+    text       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notes_person ON person_notes(person_id, day);
+CREATE INDEX IF NOT EXISTS idx_notes_day ON person_notes(day, kind);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -193,6 +274,8 @@ class Database:
             "access_groups": "TEXT NOT NULL DEFAULT '[]'",
             "access_people": "TEXT NOT NULL DEFAULT '[]'",
             "closed_hours": "TEXT NOT NULL DEFAULT ''",      # e.g. "18:00-06:00"
+            # what the place is used for (dining, classroom, ...) - helps the activity AI
+            "purpose": "TEXT NOT NULL DEFAULT ''",
         },
         "cameras": {
             # suspicious-activity rules for this camera (JSON)

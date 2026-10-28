@@ -8,6 +8,7 @@ import { trailFromSightings, centroid } from "./map2d.js";
 import { openEnrol, POSES, POSE_LABEL } from "./enrol.js";
 import { state, can, go } from "./app.js";
 import { startTour, GUIDE } from "./tour.js";
+import { personDayPanel, report, activityPage, refreshActivityStatus } from "./activity.js";
 
 function head(title, sub, ...actions) {
   return h("div", { class: "page-head" },
@@ -348,6 +349,7 @@ async function person(el, id) {
         h("div", { class: "panel-body" }, samples,
           h("p", { class: "hint", style: { marginTop: "10px" } }, "Capture all nine 360° views for the best results: seven face views for recognition, plus back and top for guards to compare. Delete blurry or wrong pictures."))),
     ),
+    personDayPanel(p),
   );
   async function loadSamples() {
     const fresh = await get(`/api/people/${id}`);
@@ -514,6 +516,9 @@ async function cameras(el) {
 
 // ======================================================================= builder
 const COLORS = ["#5b8def", "#0b7a75", "#8a6bd1", "#d0763a", "#3f9a54", "#9aa5ad", "#c2453a"];
+const PURPOSES = { "": "Not set", dining: "Dining hall / eating", classroom: "Classroom", lab: "Laboratory", library: "Library / study",
+  dormitory: "Dormitory / sleeping", sports: "Sports ground", worship: "Chapel / mosque / prayer", assembly: "Assembly / hall",
+  office: "Office / staff room", gate: "Gate / entrance", outdoor: "Outdoor / walkway", other: "Other" };
 const KINDS = { building: "Building", zone: "Zone / area", gate: "Gate", field: "Field / ground", parking: "Parking" };
 
 async function builder(el) {
@@ -612,6 +617,8 @@ async function builder(el) {
         field("Type", h("select", { name: "kind" }, Object.entries(KINDS).map(([k, l]) => h("option", { value: k, selected: k === bld.kind }, l)))),
         field("Height m", h("input", { name: "height_m", type: "number", value: bld.height_m, min: 1, step: 0.5 })),
         field("Floors", h("input", { name: "floors", type: "number", value: bld.floors, min: 1, max: 200 }))),
+      field("Used for", h("select", { name: "purpose" }, Object.entries(PURPOSES).map(([k, l]) => h("option", { value: k, selected: k === (bld.purpose || "") }, l))),
+        "Helps the activity AI: e.g. people seen eating in a Dining hall, missed meals, lessons."),
       h("div", { class: "swatches", role: "group", "aria-label": "Colour" }, COLORS.map((c) => h("button", { style: { background: c }, "aria-label": c, "aria-pressed": String(c === bld.color), onclick: () => { bld.color = c; saveBuilding(bld); map.render(); drawSide(); } }))),
     );
     f.addEventListener("change", () => {
@@ -619,7 +626,8 @@ async function builder(el) {
       const floors = Math.max(1, +v.floors || 1);
       // keep height sensible when floors are added (about 3.2 m per floor)
       const height = floors !== bld.floors && +v.height_m === bld.height_m ? Math.max(bld.height_m, floors * 3.2) : +v.height_m || 6;
-      Object.assign(bld, { name: v.name, kind: v.kind, height_m: Math.round(height * 10) / 10, floors });
+      Object.assign(bld, { name: v.name, kind: v.kind, height_m: Math.round(height * 10) / 10, floors, purpose: v.purpose });
+      refreshActivityStatus();
       saveBuilding(bld); map.render(); drawSide();
     });
     const arrange = h("div", { class: "row" },
@@ -929,4 +937,4 @@ async function guide(el) {
     h("div", { class: "panel-body" }, g.text.map((t) => h("p", {}, t)))))));
 }
 
-export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide };
+export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide, report, activity: activityPage };

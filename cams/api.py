@@ -9,6 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import shutil
 import time
 import uuid
@@ -27,6 +28,11 @@ from pydantic import BaseModel, Field
 from . import APP_FULL_NAME, __version__, auth
 from .cameras import RTSP_TEMPLATES, detect_kind, mask_source, scan_network, test_source
 from .activity import DEFAULT_ANALYTICS, parse_analytics
+from .behaviour import BUILTIN, PURPOSES, guess_purpose
+from collections import Counter
+from datetime import datetime
+
+from .insights import at as day_at, day_bounds, day_str
 from .face_engine import ALL_ANGLES, ANGLES, REFERENCE_ANGLES, ModelsMissing
 from .system import CamsSystem, snapshot_file
 
@@ -119,11 +125,55 @@ class BuildingIn(BaseModel):
     access_groups: list[str] = []
     access_people: list[int] = []
     closed_hours: str = ""
+    purpose: str = ""
 
 
 class MapIn(BaseModel):
     width_m: float = Field(gt=1, le=20000)
     height_m: float = Field(gt=1, le=20000)
+
+
+# ---------------------------------------------------------------- activity AI
+TIME_RE = r"^([01]?\d|2[0-3]):[0-5]\d$"
+
+
+class RoutineIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    start: str = Field(pattern=TIME_RE)
+    end: str = Field(pattern=TIME_RE)
+    days: list[int] = [0, 1, 2, 3, 4]
+    area_ids: list[int] = []
+    purpose: str = ""
+    expect: str = "present"
+    who_categories: list[str] = []
+    who_groups: list[str] = []
+    who_people: list[int] = []
+    grace_min: int = Field(default=10, ge=0, le=240)
+    alert: bool = False
+    enabled: bool = True
+
+
+class ActivityRuleIn(BaseModel):
+    activity: str = Field(min_length=1, max_length=60)
+    start: str = Field(pattern=TIME_RE)
+    end: str = Field(pattern=TIME_RE)
+    days: list[int] = []
+    area_ids: list[int] = []
+    purpose: str = ""
+    body: str = "any"
+    enabled: bool = True
+
+
+class ActivityTypeIn(BaseModel):
+    label: str = Field(min_length=1, max_length=60)
+
+
+class LabelIn(BaseModel):
+    label: str | None = None
+
+
+class AskIn(BaseModel):
+    question: str = Field(min_length=1, max_length=300)
 
 
 # ====================================================================== helpers
@@ -224,6 +274,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             "version": __version__,
             "needs_setup": not auth.has_users(db),
             "models_ok": sysm.models_ok,
+            "activity_ai": {"objects": sysm.behaviour is not None, "pose": bool(sysm.behaviour and sysm.behaviour.pose_ok)},
             "site_name": db.get_setting("site_name"),
             "user": user and {k: user[k] for k in ("id", "username", "full_name", "role")},
             "onboarding_done": db.get_setting("onboarding_done") == "1",
@@ -404,8 +455,13 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         p = _person_or_404(sysm, pid)
         for s in db.query("SELECT snapshot_path FROM sightings WHERE person_id = ? AND snapshot_path IS NOT NULL", (pid,)):
             (paths.snapshots / s["snapshot_path"]).unlink(missing_ok=True)
+        for s in db.query("SELECT image_path FROM activity_log WHERE person_id = ? AND image_path IS NOT NULL "
+                          "UNION SELECT image_path FROM activity_examples WHERE person_id = ? AND image_path IS NOT NULL", (pid, pid)):
+            (paths.snapshots / s["image_path"]).unlink(missing_ok=True)
         shutil.rmtree(paths.enrollments / str(pid), ignore_errors=True)
         db.execute("DELETE FROM people WHERE id = ?", (pid,))
+        if sysm.behaviour:
+            sysm.behaviour.reload()
         sysm.reload_gallery()
         db.audit(user["username"], "person_delete", {"id": pid, "name": p["full_name"]})
         return {"ok": True}
@@ -929,14 +985,14 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return (body.name, body.kind, json.dumps(body.polygon), body.height_m, floors, body.color,
                 body.rotation % 360, json.dumps(names), body.access_mode, json.dumps(body.access_categories),
                 json.dumps(body.access_groups), json.dumps([int(x) for x in body.access_people]),
-                body.closed_hours.strip())
+                body.closed_hours.strip(), body.purpose if body.purpose in PURPOSES else "")
 
     @app.post("/api/buildings")
     def add_building(body: BuildingIn, user=operator):
         _check_building(body)
         bid = db.execute(
             "INSERT INTO buildings(name, kind, polygon, height_m, floors, color, rotation, floor_names, access_mode, "
-            "access_categories, access_groups, access_people, closed_hours) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "access_categories, access_groups, access_people, closed_hours, purpose) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             _building_values(body),
         )
         sysm.refresh_areas()
@@ -949,7 +1005,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         old = db.one("SELECT access_mode, access_categories, access_groups, access_people, closed_hours FROM buildings WHERE id = ?", (bid,))
         db.execute(
             "UPDATE buildings SET name=?, kind=?, polygon=?, height_m=?, floors=?, color=?, rotation=?, floor_names=?, "
-            "access_mode=?, access_categories=?, access_groups=?, access_people=?, closed_hours=? WHERE id=?",
+            "access_mode=?, access_categories=?, access_groups=?, access_people=?, closed_hours=?, purpose=? WHERE id=?",
             _building_values(body) + (bid,),
         )
         sysm.refresh_areas()
@@ -989,7 +1045,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     # ------------------------------------------------------------ settings / admin
     EDITABLE = {"site_name", "match_threshold", "analysis_fps", "sighting_merge_seconds", "retention_days",
-                "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode"}
+                "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time"}
 
     @app.get("/api/settings")
     def get_settings(user=viewer):
@@ -1006,6 +1062,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Match threshold must be between 0.25 and 0.90.")
             if "analysis_fps" in values and not 0.2 <= float(values["analysis_fps"]) <= 15:
                 raise HTTPException(400, "Analysis speed must be 0.2 to 15 frames per second.")
+            if "daily_summary_time" in values and not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", str(values["daily_summary_time"])):
+                raise HTTPException(400, "Daily summary time must look like 20:30.")
+            if "activity_ai" in values and str(values["activity_ai"]) not in ("0", "1"):
+                raise HTTPException(400, "Activity AI must be on or off.")
             if "retention_days" in values and not 1 <= int(values["retention_days"]) <= 3650:
                 raise HTTPException(400, "Keep records for 1 to 3650 days.")
         except ValueError:
@@ -1060,6 +1120,241 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return JSONResponse({"error": f"{field.replace('_', ' ')}: {first.get('msg', 'invalid value')}"}, status_code=422)
 
     static = paths.static
+    # ------------------------------------------------------------ activity AI
+    ins = sysm.insights
+
+    def _reload_ai():
+        if sysm.behaviour:
+            sysm.behaviour.reload()
+
+    def _key_for(label: str) -> str:
+        """Turn a typed activity name into a known key (or the label itself for new ones)."""
+        lab = label.strip()
+        for k, v in ins.labels().items():
+            if lab.lower() in (k.lower(), v.lower()):
+                return k
+        return lab
+
+    def _day(day: str | None) -> str:
+        if not day:
+            return day_str()
+        try:
+            time.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "Day must look like 2026-10-28.")
+        return day
+
+    @app.get("/api/activity/status")
+    def activity_status(user=viewer):
+        b = sysm.behaviour
+        taught = db.query("SELECT label, COUNT(*) AS n FROM activity_examples WHERE label IS NOT NULL GROUP BY label ORDER BY n DESC")
+        return {
+            "available": b is not None, "enabled": sysm.setting("activity_ai") != "0", "pose": bool(b and b.pose_ok),
+            "labels": ins.labels(), "builtin": list(BUILTIN), "purposes": PURPOSES,
+            "taught": [{"key": r["label"], "label": ins.label(r["label"]), "examples": r["n"]} for r in taught],
+            "today_entries": db.one("SELECT COUNT(*) AS n FROM activity_log WHERE start_ts >= ?", (time.mktime(time.strptime(day_str(), "%Y-%m-%d")),))["n"],
+            "areas": ins.areas(),
+            "summary_time": sysm.setting("daily_summary_time") or "20:30",
+        }
+
+    @app.get("/api/people/{pid}/day")
+    def person_day(pid: int, day: str | None = None, user=viewer):
+        p = _person_or_404(sysm, pid)
+        day = _day(day)
+        a, b = day_bounds(day)
+        rows = ins.timeline(pid, a, b)
+        for r in rows:
+            r["label"] = ins.label(r["activity"])
+        return {
+            "day": day, "entries": rows, "visits": ins.visits(pid, a, b), "notes": ins.notes(pid, day),
+            "summary": ins.summary_text(p, day), "habits": ins.habits(pid, 21),
+        }
+
+    @app.put("/api/activity/entries/{eid}")
+    def correct_entry(eid: int, body: LabelIn, user=operator):
+        row = db.one("SELECT * FROM activity_log WHERE id = ?", (eid,))
+        if not row:
+            raise HTTPException(404, "Timeline entry not found.")
+        if not body.label:
+            raise HTTPException(400, "Choose what the person was doing.")
+        key = _key_for(body.label)
+        db.execute("UPDATE activity_log SET activity = ?, source = 'corrected' WHERE id = ?", (key, eid))
+        if row["example_id"]:
+            db.execute("UPDATE activity_examples SET label = ? WHERE id = ?", (key, row["example_id"]))
+        _ensure_type(key)
+        _reload_ai()
+        db.audit(user["username"], "activity_correct", {"entry": eid, "label": key})
+        return {"ok": True, "label": ins.label(key)}
+
+    def _ensure_type(key: str):
+        if key not in BUILTIN and not db.one("SELECT 1 FROM activity_types WHERE key = ?", (key,)):
+            db.execute("INSERT OR IGNORE INTO activity_types(key, label, created_at) VALUES (?,?,?)", (key, key, time.time()))
+
+    @app.get("/api/activity/types")
+    def activity_types(user=viewer):
+        return [{"key": k, "label": v, "builtin": k in BUILTIN} for k, v in ins.labels().items()]
+
+    @app.post("/api/activity/types")
+    def add_activity_type(body: ActivityTypeIn, user=operator):
+        key = body.label.strip()
+        if _key_for(key) != key or key in BUILTIN:
+            raise HTTPException(409, "That activity already exists.")
+        db.execute("INSERT OR IGNORE INTO activity_types(key, label, created_at) VALUES (?,?,?)", (key, key, time.time()))
+        return {"key": key}
+
+    @app.delete("/api/activity/types/{key}")
+    def delete_activity_type(key: str, user=operator):
+        if key in BUILTIN:
+            raise HTTPException(400, "Built-in activities cannot be removed.")
+        db.execute("DELETE FROM activity_types WHERE key = ?", (key,))
+        db.execute("UPDATE activity_examples SET label = NULL WHERE label = ?", (key,))
+        _reload_ai()
+        return {"ok": True}
+
+    @app.get("/api/activity/examples")
+    def activity_examples(auto: str = "", label: str = "", unlabelled: bool = False, person_id: int | None = None, limit: int = 60, user=operator):
+        sql = ("SELECT e.id, e.ts, e.camera_id, e.person_id, e.auto_label, e.label, e.image_path, p.full_name FROM activity_examples e "
+               "LEFT JOIN people p ON p.id = e.person_id WHERE e.image_path IS NOT NULL")
+        args: list = []
+        if auto:
+            sql += " AND e.auto_label = ?"; args.append(auto)
+        if label:
+            sql += " AND e.label = ?"; args.append(label)
+        if unlabelled:
+            sql += " AND e.label IS NULL"
+        if person_id:
+            sql += " AND e.person_id = ?"; args.append(person_id)
+        rows = db.query(sql + " ORDER BY e.ts DESC LIMIT ?", args + [max(1, min(limit, 300))])
+        for r in rows:
+            r["auto_text"] = ins.label(r["auto_label"]); r["label_text"] = ins.label(r["label"]) if r["label"] else None
+        return rows
+
+    @app.put("/api/activity/examples/{xid}")
+    def label_example(xid: int, body: LabelIn, user=operator):
+        if not db.one("SELECT 1 FROM activity_examples WHERE id = ?", (xid,)):
+            raise HTTPException(404, "Example not found.")
+        key = _key_for(body.label) if body.label else None
+        db.execute("UPDATE activity_examples SET label = ? WHERE id = ?", (key, xid))
+        if key:
+            _ensure_type(key)
+            db.execute("UPDATE activity_log SET activity = ?, source = 'corrected' WHERE example_id = ?", (key, xid))
+        _reload_ai()
+        return {"ok": True}
+
+    @app.delete("/api/activity/examples/{xid}")
+    def delete_example(xid: int, user=operator):
+        r = db.one("SELECT image_path FROM activity_examples WHERE id = ?", (xid,))
+        if r and r["image_path"] and not db.one("SELECT 1 FROM activity_log WHERE image_path = ?", (r["image_path"],)):
+            (paths.snapshots / r["image_path"]).unlink(missing_ok=True)
+        db.execute("DELETE FROM activity_examples WHERE id = ?", (xid,))
+        _reload_ai()
+        return {"ok": True}
+
+    def _rule_out(r):
+        r = dict(r)
+        r["area_ids"] = json.loads(r["area_ids"] or "[]"); r["days"] = json.loads(r["days"] or "[]")
+        r["label"] = ins.label(r["activity"])
+        return r
+
+    @app.get("/api/activity/rules")
+    def activity_rules(user=viewer):
+        return [_rule_out(r) for r in db.query("SELECT * FROM activity_rules ORDER BY start")]
+
+    def _rule_values(b: ActivityRuleIn):
+        if b.body not in ("any", "sitting", "standing", "moving"):
+            raise HTTPException(400, "Body must be any, sitting, standing or moving.")
+        key = _key_for(b.activity)
+        _ensure_type(key)
+        return (key, json.dumps(b.area_ids), b.purpose if b.purpose in PURPOSES else "", b.start, b.end,
+                json.dumps(sorted({d for d in b.days if 0 <= d <= 6})), b.body, int(b.enabled))
+
+    @app.post("/api/activity/rules")
+    def add_activity_rule(body: ActivityRuleIn, user=operator):
+        rid = db.execute("INSERT INTO activity_rules(activity, area_ids, purpose, start, end, days, body, enabled) VALUES (?,?,?,?,?,?,?,?)", _rule_values(body))
+        _reload_ai()
+        return {"id": rid}
+
+    @app.put("/api/activity/rules/{rid}")
+    def update_activity_rule(rid: int, body: ActivityRuleIn, user=operator):
+        db.execute("UPDATE activity_rules SET activity=?, area_ids=?, purpose=?, start=?, end=?, days=?, body=?, enabled=? WHERE id=?", _rule_values(body) + (rid,))
+        _reload_ai()
+        return {"ok": True}
+
+    @app.delete("/api/activity/rules/{rid}")
+    def delete_activity_rule(rid: int, user=operator):
+        db.execute("DELETE FROM activity_rules WHERE id = ?", (rid,))
+        _reload_ai()
+        return {"ok": True}
+
+    @app.get("/api/routines")
+    def routines(user=viewer):
+        out = ins.routine_rows()
+        for r in out:
+            r["place"] = ins.place_words(r)
+        return out
+
+    def _routine_values(b: RoutineIn):
+        if b.expect not in ("present", "absent"):
+            raise HTTPException(400, "Expect must be present or absent.")
+        if not b.area_ids and not b.purpose:
+            raise HTTPException(400, "Choose the place (an area, or a kind of place such as Dining hall).")
+        return (b.name.strip(), b.start, b.end, json.dumps(sorted({d for d in b.days if 0 <= d <= 6})), json.dumps(b.area_ids),
+                b.purpose if b.purpose in PURPOSES else "", b.expect, json.dumps(b.who_categories), json.dumps(b.who_groups),
+                json.dumps([int(x) for x in b.who_people]), b.grace_min, int(b.alert), int(b.enabled))
+
+    @app.post("/api/routines")
+    def add_routine(body: RoutineIn, user=operator):
+        rid = db.execute("INSERT INTO routines(name, start, end, days, area_ids, purpose, expect, who_categories, who_groups, who_people, "
+                         "grace_min, alert, enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", _routine_values(body))
+        db.audit(user["username"], "routine_add", {"id": rid, "name": body.name})
+        return {"id": rid}
+
+    @app.put("/api/routines/{rid}")
+    def update_routine(rid: int, body: RoutineIn, user=operator):
+        db.execute("UPDATE routines SET name=?, start=?, end=?, days=?, area_ids=?, purpose=?, expect=?, who_categories=?, who_groups=?, "
+                   "who_people=?, grace_min=?, alert=?, enabled=?, checked_day='' WHERE id=?", _routine_values(body) + (rid,))
+        return {"ok": True}
+
+    @app.delete("/api/routines/{rid}")
+    def delete_routine(rid: int, user=operator):
+        db.execute("DELETE FROM routines WHERE id = ?", (rid,))
+        db.execute("DELETE FROM person_notes WHERE routine_id = ?", (rid,))
+        return {"ok": True}
+
+    @app.post("/api/routines/{rid}/check")
+    def check_routine_now(rid: int, day: str | None = None, user=operator):
+        r = next((x for x in ins.routine_rows() if x["id"] == rid), None)
+        if not r:
+            raise HTTPException(404, "Routine not found.")
+        res = ins.check_routine(r, _day(day))
+        return {"checked": len(res), "counts": dict(Counter(x["kind"] for x in res))}
+
+    @app.get("/api/report/daily")
+    def daily_report(day: str | None = None, category: str = "", group: str = "", all: bool = False, user=viewer):
+        return ins.report(_day(day), category, group, all)
+
+    @app.get("/api/report/daily.csv")
+    def daily_report_csv(day: str | None = None, category: str = "", group: str = "", all: bool = False, user=viewer):
+        day = _day(day)
+        data = ins.report_csv(ins.report(day, category, group, all))
+        return Response("\ufeff" + data, media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="cams-daily-report-{day}.csv"'})
+
+    @app.post("/api/report/daily/summaries")
+    def write_summaries(day: str | None = None, user=operator):
+        day = _day(day)
+        for r in ins.routine_rows():
+            if r["enabled"] and (not r["days"] or datetime.strptime(day, "%Y-%m-%d").weekday() in r["days"]):
+                if day_at(day, r["end"]) < time.time():
+                    ins.check_routine(r, day)
+        n = ins.write_day_summaries(day)
+        return {"people": n}
+
+    @app.post("/api/ask")
+    def ask(body: AskIn, user=viewer):
+        db.audit(user["username"], "ask", {"q": body.question[:120]})
+        return ins.ask(body.question)
+
     # Always check the screen files with the server (cheap 304s), so an update shows at once
     # instead of the window reusing the previous version's copies.
     @app.middleware("http")
