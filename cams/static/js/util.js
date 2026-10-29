@@ -80,6 +80,17 @@ export const ICONS = {
   upload: svg('<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>'),
   sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
   moon: svg('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>'),
+  recordings: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="12" r="2.5"/><path d="M14 10h4M14 14h4"/>'),
+  rec: svg('<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>'),
+  stop: svg('<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>'),
+  play: svg('<path d="M8 5v14l11-7z" fill="currentColor" stroke="none"/>'),
+  pause: svg('<path d="M8 5v14M16 5v14" stroke-width="3"/>'),
+  download: svg('<path d="M12 4v12M7 11l5 5 5-5M4 20h16"/>'),
+  pin: svg('<path d="M12 21s7-6 7-11.5a7 7 0 1 0-14 0C5 15 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
+  globe: svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>'),
+  copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
+  star: svg('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>'),
+  mouse: svg('<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v6M6 9h12"/>'),
 };
 
 export const POSE_ICON = {
@@ -117,7 +128,7 @@ export function dialog({ title, body, actions = [], wide = false, onClose }) {
   d.append(
     h("div", { class: "d-head" }, h("h2", {}, title), h("button", { class: "ghost small", "aria-label": "Close", onclick: close }, "Close")),
     h("div", { class: "d-body" }, body),
-    actions.length ? foot : null,
+    ...(actions.length ? [foot] : []),
   );
   d.addEventListener("close", () => { onClose?.(); d.remove(); });
   document.body.append(d);
@@ -205,4 +216,111 @@ export function logoMark(cls = "brand-mark") {
     <path d="M67.8 31.6A25.75 25.75 0 1 0 67.8 63.4" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round"/>
     <circle cx="67" cy="47.5" r="6" fill="#00998c"/></svg>`;
   return wrap.firstElementChild;
+}
+
+// ------------------------------------------------------------- personal preferences
+// map_mouse: "standard" = left drag moves the map, right drag looks around;
+//            "swapped"  = right drag moves the map, left drag looks around.
+export const prefs = { mouse: "standard" };
+export function setPrefs(p) {
+  Object.assign(prefs, p);
+  window.dispatchEvent(new CustomEvent("cams:prefs", { detail: { ...prefs } }));
+}
+export const mouseSwapped = () => prefs.mouse === "swapped";
+
+// ------------------------------------------------------------- GPS position on the campus map
+// Same maths as cams/geo.py: Web Mercator pixels at zoom 20 around the map centre.
+const Z = 20, N = 256 * 2 ** Z;
+const mercX = (lng) => ((lng + 180) / 360) * N;
+const mercY = (lat) => { const s = Math.sin((lat * Math.PI) / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * N; };
+export function toLatLng(map, x, y) {
+  const g = map?.geo;
+  if (!g || x == null || y == null) return null;
+  const mpp = (156543.03392804097 * Math.cos((g.lat * Math.PI) / 180)) / 2 ** Z;
+  const px = mercX(g.lng) + (x - map.width_m / 2) / mpp, py = mercY(g.lat) + (y - map.height_m / 2) / mpp;
+  const lng = (px / N) * 360 - 180;
+  const lat = (Math.atan(Math.sinh(Math.PI * (1 - (2 * py) / N))) * 180) / Math.PI;
+  return { lat, lng };
+}
+export const fmtLatLng = (p) => (p ? `${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}` : "");
+
+export async function copyText(text, what = "Copied") {
+  try { await navigator.clipboard.writeText(text); toast(`${what}: ${text}`); }
+  catch {
+    const t = h("textarea", { style: { position: "fixed", opacity: 0 } }, text);
+    document.body.append(t); t.select();
+    try { document.execCommand("copy"); toast(`${what}: ${text}`); } catch { toast(text); }
+    t.remove();
+  }
+}
+
+// A small "GPS: -6.770123, 39.240456 [copy]" line.
+export function gpsLine(p, label = "GPS") {
+  if (!p || p.lat == null) return null;
+  const text = fmtLatLng(p);
+  return h("span", { class: "gps" }, icon("pin"), h("span", { class: "num" }, `${label} ${text}`),
+    h("button", { class: "ghost small", title: "Copy the position (paste it into Google Maps)", "aria-label": "Copy GPS position",
+      onclick: (e) => { e.stopPropagation(); copyText(text, "Position copied"); } }, icon("copy")));
+}
+
+// ------------------------------------------------------------- video player
+// Recordings are .mp4 files on the CAMS PC. The window shows them by receiving the
+// pictures one by one (like the live view), so every Windows PC can play them.
+export const fmtTime = (s) => {
+  s = Math.max(0, Math.round(s));
+  const hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  return hh ? `${hh}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}` : `${mm}:${String(ss).padStart(2, "0")}`;
+};
+export const fmtSize = (b) => (b > 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b > 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+
+export function videoPlayer(rec, { autoplay = true, loop = false } = {}) {
+  const dur = Math.max(0.1, rec.duration || rec.end_ts - rec.start_ts);
+  let pos = 0, playing = false, t0 = 0, p0 = 0, speed = 1, timer = null;
+  const img = h("img", { alt: `Video from ${rec.camera_name}` });
+  const bar = h("input", { type: "range", min: 0, max: dur, step: 0.1, value: 0, "aria-label": "Position in the video" });
+  const playBtn = h("button", { class: "small", "aria-label": "Play" }, icon("play"));
+  const tLabel = h("span", { class: "num p-time" });
+  const clockLabel = h("span", { class: "num p-clock" });
+  const sp = h("select", { "aria-label": "Speed" }, [0.5, 1, 2, 4, 8].map((v) => h("option", { value: v, selected: v === 1 }, `${v}x`)));
+  const now = () => (playing ? Math.min(dur, p0 + ((performance.now() - t0) / 1000) * speed) : pos);
+  const show = () => {
+    const p = now();
+    bar.value = p;
+    tLabel.textContent = `${fmtTime(p)} / ${fmtTime(dur)}`;
+    clockLabel.textContent = new Date((rec.start_ts + p) * 1000).toLocaleTimeString();
+  };
+  const still = () => { img.src = `/api/recordings/${rec.id}/frame.jpg?t=${pos.toFixed(2)}`; };
+  function play() {
+    if (pos >= dur - 0.2) pos = 0;
+    playing = true; p0 = pos; t0 = performance.now();
+    img.src = `/api/recordings/${rec.id}/play?start=${pos.toFixed(2)}&speed=${speed}&_=${Date.now()}`;
+    playBtn.replaceChildren(icon("pause")); playBtn.setAttribute("aria-label", "Pause");
+    clearInterval(timer);
+    timer = setInterval(() => {
+      show();
+      if (now() >= dur) { pos = dur; pause(); if (loop) play(); }
+    }, 200);
+  }
+  function pause() {
+    pos = now(); playing = false; clearInterval(timer);
+    playBtn.replaceChildren(icon("play")); playBtn.setAttribute("aria-label", "Play");
+    still(); show();
+  }
+  playBtn.onclick = () => (playing ? pause() : play());
+  bar.oninput = () => { const was = playing; if (was) { playing = false; clearInterval(timer); } pos = +bar.value; show(); if (was) play(); else still(); };
+  sp.onchange = () => { speed = +sp.value; if (playing) { pos = now(); play(); } };
+  const ext = rec.ext || ".mp4";
+  const el = h("div", { class: "player" },
+    h("div", { class: "p-screen", onclick: () => playBtn.click() }, img),
+    h("div", { class: "p-bar" }, playBtn, bar, tLabel, clockLabel, sp,
+      h("a", { class: "btn small", href: `/api/recordings/${rec.id}/download`, download: `${rec.camera_name || "camera"}${ext}`, title: "Save this video to the Downloads folder" }, icon("download"), "Download")));
+  el.stop = () => { clearInterval(timer); playing = false; img.removeAttribute("src"); };
+  show();
+  if (autoplay) play(); else still();
+  return el;
+}
+
+export function playDialog(rec, title) {
+  const p = videoPlayer(rec);
+  dialog({ title: title || `${rec.camera_name}, ${clock(rec.start_ts)}`, wide: true, body: p, onClose: () => p.stop() });
 }

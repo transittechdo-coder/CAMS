@@ -8,13 +8,21 @@ lawfully. This page lists what CAMS does to help, and what you must do.
 ## What CAMS does
 
 - **Stays local.** Video, faces and records are processed and stored only on the CAMS PC
-  (`%APPDATA%\CAMS`). Nothing is sent to TransitTech or to the internet.
+  (`%APPDATA%\CAMS`). Nothing is sent to TransitTech or to the internet. The one exception is
+  optional: when an operator uses **Use a real satellite map**, CAMS asks Esri's map service for
+  the satellite picture of the area shown, and a typed place name is looked up with
+  OpenStreetMap. Only map positions are sent, never video, faces or names of people.
 - **Blurs strangers.** Faces of people who are not enrolled are blurred in the live view and in
   saved pictures (setting on by default). Strangers are only logged on cameras marked
   *Restricted area*.
 - **Records consent** per person: whether consent was given, by whom and when.
 - **Deletes old records** automatically after the number of days set in Settings (30 by default).
-- **Erases a person completely** (Delete person and data): face prints, pictures and all sightings.
+  Camera recordings are deleted after their own number of days (7 by default) or when their disk
+  space is full, unless someone marked a video **Keep**. Sighting clips follow the sightings.
+- **Recordings and clips** blur strangers the same way as the live view. Every play, download and
+  export of a recording is written in the activity log.
+- **Erases a person completely** (Delete person and data): face prints, pictures, all sightings
+  and the video clips of their sightings.
 - **Inactive people** are no longer recognised but their record is kept until deleted.
 - **Limits access** with personal accounts and three roles, and **logs** every sign-in, search,
   enrolment, change, export and deletion in the activity log.

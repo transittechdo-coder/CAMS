@@ -30,6 +30,8 @@ from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
 from .face_engine import FaceEngine, Gallery, ModelsMissing, blur_region, crop_face, models_present
+from .geo import TileCache
+from .recorder import Recorder
 
 log = logging.getLogger("cams")
 
@@ -69,6 +71,9 @@ class CamsSystem:
         # activity AI: timelines of what each recognised person is doing
         self.behaviour = BehaviourEngine(self.db, paths, paths.models) if self.activity_ok else None
         self.insights = Insights(self)
+        # video: recordings, sighting clips and exports; satellite tiles for the map
+        self.recorder = Recorder(self)
+        self.tiles = TileCache(paths.tiles)
 
     # ================================================================ lifecycle
     def start(self) -> None:
@@ -87,9 +92,15 @@ class CamsSystem:
         if self._start_cameras:
             for cam in self.db.query("SELECT * FROM cameras WHERE enabled = 1"):
                 self.start_camera(cam)
+            self.recorder.sync_continuous()
 
     def stop(self) -> None:
         self._stop.set()
+        self.recorder.stop_all()
+        try:
+            self.recorder.flush_clips()
+        except Exception:
+            log.exception("Could not save the last clips")
         with self._cam_lock:
             for w in list(self.cameras.values()):
                 w.stop()
@@ -224,7 +235,17 @@ class CamsSystem:
         }
 
     def _on_frame(self, worker: CameraWorker, frame: np.ndarray) -> None:
-        if not self.models_ok or self._stop.is_set():
+        if self._stop.is_set():
+            return
+        self._queue_analysis(worker, frame)
+        st = worker.state
+        try:
+            self.recorder.tap(worker.id, st.name, frame, st.overlays, time.time() - st.overlays_at < 2.5)
+        except Exception:
+            log.exception("Clip buffer failed on camera %s", worker.id)
+
+    def _queue_analysis(self, worker: CameraWorker, frame: np.ndarray) -> None:
+        if not self.models_ok:
             return
         fps = max(0.2, self.fsetting("analysis_fps", 2))
         now = time.time()
@@ -347,6 +368,10 @@ class CamsSystem:
                 (face.person_id, cam_id, worker.state.name, ts, ts, face.similarity, snap),
             )
             self._active[key] = {"id": sid, "last_seen": ts, "hits": 1, "confidence": face.similarity}
+            try:
+                self.recorder.request_clip(cam_id, worker.state.name, sid, ts)
+            except Exception:
+                log.exception("Could not start a sighting clip")
             if len(self._active) > 5000:
                 cutoff = ts - merge
                 self._active = {k: v for k, v in self._active.items() if v["last_seen"] >= cutoff}
@@ -396,6 +421,16 @@ class CamsSystem:
         return f"{day}/{name}"
 
     # ================================================================ live view
+    def compose_frame(self, cam_id: int, *, max_width: int = 1280, annotate: bool = False):
+        """Newest picture of a camera as shown to people (strangers blurred), and its time."""
+        w = self.cameras.get(cam_id)
+        if not w or w.state.status != "online":
+            return None
+        frame = w.latest()
+        if frame is None:
+            return None
+        return self._dress(w, frame, max_width, annotate), w.state.last_frame_at
+
     def render_frame(self, cam_id: int, *, max_width: int = 1280, annotate: bool = True) -> bytes | None:
         w = self.cameras.get(cam_id)
         if not w:
@@ -403,6 +438,11 @@ class CamsSystem:
         frame = w.latest()
         if frame is None:
             return None
+        frame = self._dress(w, frame, max_width, annotate)
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        return buf.tobytes() if ok else None
+
+    def _dress(self, w: CameraWorker, frame: np.ndarray, max_width: int, annotate: bool) -> np.ndarray:
         st = w.state
         fresh = time.time() - st.overlays_at < 2.5
         if fresh and annotate:
@@ -429,8 +469,7 @@ class CamsSystem:
         h, wd = frame.shape[:2]
         if wd > max_width:
             frame = cv2.resize(frame, (max_width, int(h * max_width / wd)))
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        return buf.tobytes() if ok else None
+        return frame
 
     # ================================================================ maintenance
     def purge_old(self) -> int:
@@ -453,6 +492,10 @@ class CamsSystem:
         self.db.execute("DELETE FROM activity_examples WHERE ts < ? AND label IS NULL", (cutoff,))
         self.db.execute("DELETE FROM person_notes WHERE ts < ?", (cutoff,))
         self.db.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
+        try:
+            self.recorder.purge()
+        except Exception:
+            log.exception("Recording clean-up failed")
         # remove empty day folders
         for d in self.paths.snapshots.glob("*"):
             if d.is_dir() and not any(d.iterdir()):

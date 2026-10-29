@@ -3,7 +3,7 @@
 // by clicking points, and the camera flies freely (right-drag + W A S D).
 import * as THREE from "three";
 import { TransformControls } from "/static/vendor/TransformControls.js";
-import { h, get, put, patch, post, toast, fail, confirmBox, logoMark } from "./util.js";
+import { h, get, put, patch, post, toast, fail, confirmBox, logoMark, mouseSwapped } from "./util.js";
 import { TYPES, CATS, MATERIALS, defaults, buildObject, disposeGroup, setupLights, fitSunShadow, material } from "./world3d.js";
 import { CameraRig } from "./camrig.js";
 
@@ -532,7 +532,8 @@ export async function openStudio({ onClose } = {}) {
       return;
     }
     act = { kind: "empty", start: [e.clientX, e.clientY], shift: e.shiftKey };
-    rig.startOrbit(e, planeHit(e.clientX, e.clientY, 0));
+    if (mouseSwapped()) rig.startLook(e);           // buttons swapped: left drag looks around
+    else rig.startOrbit(e, planeHit(e.clientX, e.clientY, 0));
   });
 
   canvas.addEventListener("pointermove", (e) => {
@@ -1161,9 +1162,10 @@ export async function openStudio({ onClose } = {}) {
 
   function showHelp() {
     const rows = [
-      ["Look around", "Hold the right mouse button and move the mouse"], ["Fly", "W A S D or the arrow keys (hold Shift to go faster)"],
+      ["Look around", mouseSwapped() ? "Drag empty space with the left mouse button" : "Hold the right mouse button and move the mouse"], ["Fly", "W A S D or the arrow keys (hold Shift to go faster)"],
       ["Up / down", "E / Q"], ["Zoom", "Mouse wheel (zooms to where you point)"], ["Slide the view", "Hold the middle button (wheel) and move"],
-      ["Turn around a point", "Drag empty space with the left button (or Alt + left drag)"], ["Walk inside", "Walk inside button; Esc to stop; walk into a ladder to climb"],
+      ["Turn around a point", mouseSwapped() ? "Hold the right mouse button and move (or Alt + left drag)" : "Drag empty space with the left button (or Alt + left drag)"],
+      ["Mouse buttons", "Swap left and right in Settings > Maps and mouse"], ["Walk inside", "Walk inside button; Esc to stop; walk into a ladder to climb"],
       ["Choose", "Click; Shift-click for more; Ctrl+A for all"], ["Move / Turn / Size", "G / R / T, then drag the coloured handles"],
       ["Slide on the ground", "Drag a chosen shape with the Select tool"], ["Raise / lower", "Page Up / Page Down"],
       ["Copy / paste / duplicate", "Ctrl+C / Ctrl+V / Ctrl+D"], ["Delete", "Delete key"], ["Undo / redo", "Ctrl+Z / Ctrl+Y"],

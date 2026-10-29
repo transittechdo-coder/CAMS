@@ -1,5 +1,5 @@
 // CAMS front end: sign-in / first-time setup, the main shell and page routing.
-import { logoMark, h, get, post, icon, toast, fail, ICONS, field } from "./util.js";
+import { logoMark, h, get, post, icon, toast, fail, ICONS, field, setPrefs } from "./util.js";
 import { PAGES } from "./pages.js";
 import { startTour, tourWanted } from "./tour.js";
 
@@ -9,6 +9,7 @@ export const state = { status: null, user: null, current: null, alertsSeen: 0 };
 const NAV = [
   { id: "overview", label: "Overview", icon: "overview" },
   { id: "live", label: "Live cameras", icon: "live" },
+  { id: "recordings", label: "Recordings", icon: "recordings" },
   { id: "find", label: "Find a person", icon: "find" },
   { id: "people", label: "People", icon: "people" },
   { id: "builder", label: "Campus builder", icon: "builder", role: "operator" },
@@ -28,6 +29,7 @@ async function boot() {
   try { state.status = await get("/api/status"); }
   catch (e) { root.replaceChildren(h("div", { class: "empty" }, h("h3", {}, "CAMS is starting"), e.message)); setTimeout(boot, 2000); return; }
   state.user = state.status.user;
+  setPrefs({ mouse: state.status.map_mouse || "standard" });
   document.title = `CAMS - ${state.status.site_name}`;
   if (state.status.needs_setup) return renderSetup();
   if (!state.user) return renderLogin();

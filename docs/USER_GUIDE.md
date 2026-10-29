@@ -58,8 +58,8 @@ people walk *towards* the camera.
 
 Open **Campus builder**.
 
-1. Under **Site**, press **Add map picture** if you have a plan or a satellite screenshot of the
-   compound. Then type its real **width** and **depth** in metres so distances are correct.
+1. Under **Site**, press **Use a real satellite map** (see below), or press **Add map picture** if
+   you have your own plan of the compound and type its real **width** and **depth** in metres.
 2. Choose **Draw a rectangle** and drag over each building, or **Draw any shape** and click each
    corner (click the first corner again or press Enter to finish).
 3. Name each shape and choose its type: building, zone, gate, field or parking. Buildings get a
@@ -71,6 +71,21 @@ Open **Campus builder**.
    or drag it. Under **Floors**, press **Add floor** and give each floor a name (Ground floor,
    Reading room, ...). Cameras can then be placed on a named floor.
 7. Press **3D** (top right of the map) to see the campus in 3D, with floor lines on each building.
+
+### Real satellite map and exact GPS positions
+
+1. In **Campus builder > Site**, press **Use a real satellite map**.
+2. Type the place name (for example *Mikocheni, Dar es Salaam*), paste a Google Maps link, or type
+   the coordinates (`-6.7627, 39.2443`), and press **Find**. You can also just drag and zoom.
+3. Move and zoom until the whole compound sits inside the amber box. The box shows its size in metres.
+4. Press **Use this area**. CAMS downloads the satellite picture (the internet is needed only for
+   this step), saves it, and sets the map size for you. After that it works fully offline.
+
+Buildings and cameras you drew before stay in the same place on the ground. Once the map is on a
+satellite picture, CAMS knows the **exact GPS position** of every camera and sighting: it shows it
+under the mouse on the map, on **Find a person** (*Exact place*) and on each stop of a route. Press
+the copy button next to a position and paste it into Google Maps or a phone to go there.
+**Only save the position** keeps your own plan picture and just tells CAMS where it is on Earth.
 
 ### 3D Map Studio (draw the campus in 3D)
 
@@ -176,16 +191,30 @@ list show which of the nine views each person has.
 
 Open **Find a person** and type a name or ID number.
 
-- CAMS shows **when and where the person was last seen**, the last face picture, their path on the
-  map (amber dashed line, pulsing pin at the last place) and a timeline.
-- Change the period: last 24 hours, today, last 7 or 30 days.
+- CAMS shows **when and where the person was last seen**, the exact GPS position of that place and
+  the last face picture.
+- **Route:** the map draws a line from building to building in the order the person went, with
+  arrows showing the direction and a numbered stop for each place (1 = first place in the period,
+  the amber stop = now). Each stop has a small picture of the person; press it to **watch the
+  clip** of the moment they were seen there. The list beside the map shows the same stops with
+  times, how long they stayed and a **Watch** button; the line above reads like
+  *Asha went from Main gate → Block A → Library*.
+- Change the period: today, last 24 hours, last 7 or 30 days.
 - **Search by photo:** choose a photo (for example of a visitor); CAMS shows the most similar
   enrolled people. Always check with your own eyes before acting on a result.
 
-## 6. Live cameras and alerts
+## 6. Live cameras, recordings and alerts
 
 - **Live cameras** shows all cameras. Green box = recognised, red = not enrolled (face blurred),
   orange = on the watch list. Double-click a camera for full screen.
+- **Record:** press **Record** on a camera to save its video; press **Stop** to finish. A red
+  **REC** badge shows while it records. To record a camera all the time, tick **Record this camera
+  all the time** in its settings on the **Cameras** page.
+- **Recordings** lists the saved videos by day. **Play** watches a video inside CAMS (pause, jump,
+  2x-8x speed); **Download** saves the .mp4 file to the Downloads folder; **Keep** protects it
+  from automatic deletion.
+- **Download a part:** on **Recordings**, choose the camera, the day and the time from / to, then
+  press **Download this part**. The bar shows which times were recorded (click it to pick a time).
 - **Alerts** lists watch-list sightings, strangers on restricted cameras and offline cameras.
   New alerts also pop up in the corner. Press **Seen** when handled.
 
@@ -193,7 +222,13 @@ Open **Find a person** and type a name or ID number.
 
 - **Match strictness:** if CAMS confuses two people, move it right; if it misses people, move it left.
 - **Pictures checked per second:** lower it if the PC is slow.
+- **Maps and mouse** (every user): **Swapped** makes the **right** mouse button move the map (and
+  turn around a point in 3D) and the left button look around in 3D. Clicking to choose and draw
+  stays on the left button. The middle button (wheel) always moves the map.
 - **Privacy:** blur strangers, keep face pictures with sightings, delete sightings after N days.
+- **Video recordings and clips:** short clips of each sighting on/off and their length, recording
+  speed and size, how many days recordings are kept, and the disk space they may use (the oldest
+  are deleted first when it is full).
 - **Users:** add an account for each staff member. *Viewer* can watch and search, *Operator* can
   also enrol people and set up cameras, *Admin* can do everything.
 - **Backup:** download a backup zip and keep it locked away; it contains personal data.

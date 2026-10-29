@@ -93,6 +93,11 @@ def _window_webview(url: str, ready=None) -> bool:
         logging.getLogger("cams").info("pywebview not available: %s", exc)
         return False
     try:
+        # let "Download" buttons (videos, backups, reports) save files to the Downloads folder
+        try:
+            webview.settings["ALLOW_DOWNLOADS"] = True
+        except Exception:
+            pass
         win = webview.create_window("CAMS - Camera AI Management System", url, width=1360, height=860,
                                     min_size=(1000, 640), background_color="#EEF2F0")
         kwargs = {"private_mode": False, "storage_path": str(get_paths().data / "webview")}
