@@ -45,7 +45,7 @@ async function overview(el) {
         h("button", { class: "small", onclick: () => go("find") }, "Search")), feed),
     ),
   );
-  const map = new MapView(mapBox, { height: "tall" });
+  const map = new MapView(mapBox, { height: "tall", modeKey: "cams-overview-mode", default3d: true });
   await map.load();
 
   const figure = (n, label, cls = "") => h("div", { class: `figure ${cls}` }, h("span", { class: "num" }, n), h("span", {}, label));

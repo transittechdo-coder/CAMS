@@ -6,10 +6,14 @@ import { SiteMap } from "./map2d.js";
 import { savedStyle, saveStyle } from "./hologram.js";
 
 export class MapView {
-  constructor(container, { height = "tall", editable = false, mapOpts = {}, allow3d = true } = {}) {
+  constructor(container, { height = "tall", editable = false, mapOpts = {}, allow3d = true, modeKey = "cams-map-mode", default3d = false } = {}) {
     this.wrap = h("div", { class: `map-wrap ${height}` });
     container.append(this.wrap);
-    this.mode = localStorage.getItem("cams-map-mode") === "3d" && allow3d ? "3d" : "2d";
+    // each page can remember its own Plan / 3D choice; the Overview opens in 3D (hologram) first
+    this.modeKey = modeKey;
+    let saved = null;
+    try { saved = localStorage.getItem(modeKey); } catch {}
+    this.mode = allow3d && (saved ? saved === "3d" : default3d) ? "3d" : "2d";
     this.coords = h("button", { class: "map-coords hidden", title: "GPS position under the mouse. Click to copy it.",
       onclick: () => this._hoverLL && copyText(fmtLatLng(this._hoverLL), "Position copied") });
     this.credit = h("div", { class: "map-credit hidden" });
@@ -55,7 +59,7 @@ export class MapView {
 
   async setMode(mode) {
     this.mode = mode;
-    try { localStorage.setItem("cams-map-mode", mode); } catch {}
+    try { localStorage.setItem(this.modeKey, mode); } catch {}
     this.seg?.querySelectorAll("button").forEach((b, i) => b.setAttribute("aria-pressed", String((i === 0) === (mode === "2d"))));
     if (mode === "3d") {
       this.map2d.svg.classList.add("hidden");

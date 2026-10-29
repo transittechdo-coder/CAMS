@@ -20,7 +20,8 @@ const CORE = new THREE.Color("#0f8c84");
 const BG = new THREE.Color("#060a12");
 
 const STYLE_KEY = "cams-3d-style";
-export const savedStyle = () => { try { return localStorage.getItem(STYLE_KEY) === "hologram" ? "hologram" : "normal"; } catch { return "normal"; } };
+// The hologram is the standard 3D look; "normal" only when someone switched it off.
+export const savedStyle = () => { try { return localStorage.getItem(STYLE_KEY) === "normal" ? "normal" : "hologram"; } catch { return "hologram"; } };
 export const saveStyle = (s) => { try { localStorage.setItem(STYLE_KEY, s); } catch {} };
 
 // Glass with a rim: an even teal tint everywhere, a little brighter where a face is seen edge-on.
