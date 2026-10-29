@@ -47,7 +47,7 @@ export class MapView {
     if (this.view3d) this.view3d.setData(this.data);
     if (this.mode === "3d") await this.setMode("3d");
     this.credit.textContent = this.data.attribution || "";
-    this.credit.classList.toggle("hidden", !this.data.attribution);
+    this._credit();
     return this.data;
   }
 
@@ -73,6 +73,7 @@ export class MapView {
       }
       this.box3d.classList.remove("hidden");
       this.holoBtn?.classList.remove("hidden");
+      setTimeout(() => this._credit(), 0);
       this.view3d.setStyle(this.style);
       if (this.data) this.view3d.setData(this.data);
       this.view3d.setMarks(this._marks3d());
@@ -80,11 +81,19 @@ export class MapView {
       this.map2d.svg.classList.remove("hidden");
       this.box3d?.classList.add("hidden");
       this.holoBtn?.classList.add("hidden");
+      this._credit();
       this.map2d._applyView();
     }
   }
 
+  _credit() {
+    // the satellite credit is only needed while the satellite picture is visible
+    const shown = !!this.data?.attribution && !(this.mode === "3d" && this.style === "hologram");
+    this.credit.classList.toggle("hidden", !shown);
+  }
+
   setStyle(style) {
+    this._credit && setTimeout(() => this._credit(), 0);
     this.style = style;
     saveStyle(style);
     this.holoBtn?.setAttribute("aria-pressed", String(style === "hologram"));

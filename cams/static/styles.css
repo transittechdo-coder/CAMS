@@ -565,26 +565,24 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .search.grow { flex: 1; }
 .panel-head input[type="date"] { width: auto; flex: none; }
 
-/* ------------------------------------------------------------ hologram 3D view (X-ray / rim light) */
-.holo-hud { position: absolute; inset: 0; pointer-events: none; z-index: 3; font: 12.5px var(--body); color: #bff6ff; }
-.holo-legend { position: absolute; top: 10px; left: 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
-  padding: 6px 12px; background: rgba(4, 12, 22, .72); border: 1px solid rgba(46, 232, 255, .35); border-radius: 4px; text-shadow: 0 0 6px rgba(46, 232, 255, .6); }
-.holo-legend span { display: inline-flex; gap: 6px; align-items: center; }
-.holo-legend .faint { color: #7fb7c4; }
-.holo-legend i.dot { width: 10px; height: 10px; border-radius: 50%; background: #2ee8ff; box-shadow: 0 0 8px #2ee8ff; }
-.holo-legend i.sq { width: 10px; height: 10px; background: #13707f; border: 1px solid #2ee8ff; }
-.holo-compass { position: absolute; left: 14px; bottom: 14px; width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(46, 232, 255, .6);
-  background: rgba(4, 12, 22, .6); box-shadow: 0 0 12px rgba(46, 232, 255, .25) inset; }
-.holo-needle { position: absolute; inset: 0; transition: transform .1s linear; }
-.holo-needle::before { content: ""; position: absolute; left: 50%; top: 9px; width: 2px; height: 18px; margin-left: -1px; background: #2ee8ff; box-shadow: 0 0 6px #2ee8ff; }
-.holo-needle b { position: absolute; left: 50%; top: -1px; transform: translateX(-50%); font: 700 10px var(--display); color: #2ee8ff; }
-.holo-corner { position: absolute; width: 22px; height: 22px; border: 0 solid rgba(46, 232, 255, .7); }
-.holo-corner.tl { top: 6px; left: 6px; border-top-width: 2px; border-left-width: 2px; }
-.holo-corner.tr { top: 6px; right: 6px; border-top-width: 2px; border-right-width: 2px; }
-.holo-corner.bl { bottom: 6px; left: 6px; border-bottom-width: 2px; border-left-width: 2px; }
-.holo-corner.br { bottom: 6px; right: 6px; border-bottom-width: 2px; border-right-width: 2px; }
+/* ------------------------------------------------------------ hologram 3D view (digital blueprint) */
+.holo-hud { position: absolute; inset: 0; pointer-events: none; z-index: 3; font: 12.5px var(--body); color: #d5f7fa; }
+.holo-legend { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+  padding: 9px 14px; padding-right: 330px; background: linear-gradient(rgba(6, 10, 18, .92), rgba(6, 10, 18, .75)); border-bottom: 1px solid rgba(63, 244, 255, .14); }
+.holo-legend span { display: inline-flex; gap: 7px; align-items: center; white-space: nowrap; }
+.holo-legend .faint { color: #7d97a3; }
+.holo-legend i.dot { width: 9px; height: 9px; border-radius: 50%; background: #3ff4ff; box-shadow: 0 0 7px #3ff4ff; }
+.holo-legend i.sq { width: 9px; height: 9px; background: #0f8c84; }
+.holo-legend i.cam { width: 8px; height: 8px; background: #3ff4ff; box-shadow: 0 0 6px #3ff4ff; border-radius: 1px; }
+.holo-spin { pointer-events: auto; position: absolute; top: 52px; right: 14px; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  padding: 0; background: rgba(40, 52, 62, .85); border: 1px solid rgba(255, 255, 255, .08); color: #e8f3f5; }
+.holo-spin:hover { background: rgba(60, 76, 88, .95); }
+.holo-spin svg { width: 14px; height: 14px; }
+.holo-info { position: absolute; left: 14px; bottom: 22px; font: 11px/1.2 Consolas, "Cascadia Mono", "Courier New", monospace; letter-spacing: .04em; color: #2aa9b4; opacity: .85; }
 .map-tools .holo-btn[aria-pressed="true"], .studio .st-top button.holo-on { background: #062a33; color: #2ee8ff; border-color: #2ee8ff; box-shadow: 0 0 8px rgba(46, 232, 255, .45); }
 .map-tools.right { z-index: 4; }
 .st-cams { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 6px; }
 .st-cams .st-cam { display: inline-flex; gap: 2px; }
-.studio .st-view .holo-legend { top: auto; bottom: 16px; left: 80px; }
+.studio .st-view .holo-legend { top: auto; bottom: 0; border-bottom: 0; border-top: 1px solid rgba(63, 244, 255, .14); padding-right: 14px; }
+.studio .st-view .holo-info { bottom: 46px; }
+.studio .st-view .holo-spin { top: 64px; }

@@ -395,7 +395,8 @@ export async function openStudio({ onClose } = {}) {
     blocked,
     onWalkExit: () => setWalk(false),
   });
-  holo = new Hologram(scene, { roots: [world, extras], ground, hideInHolo: [outer], container: viewBox, rig });
+  holo = new Hologram(scene, { roots: [world, extras], ground, hideInHolo: [outer], container: viewBox, rig, spin: false,
+    info: `SYS.LOC: ${mapData.geo ? `${mapData.geo.lat.toFixed(5)}, ${mapData.geo.lng.toFixed(5)}` : `GRID ${Math.round(W)}x${Math.round(H)} M`} // MAP STUDIO // CAMS BLUEPRINT` });
   holo.setSite(W, H);
   if (doc.view?.pos) {
     camera.position.fromArray(doc.view.pos); rig.yaw = doc.view.yaw; rig.pitch = doc.view.pitch; rig._apply();

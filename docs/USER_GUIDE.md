@@ -77,10 +77,13 @@ Open **Campus builder**.
 
 ### Hologram view (see-through 3D)
 
-In any 3D view (the **3D** button on a map, or the 3D Map Studio) press **Hologram**. Buildings
-become see-through glass with glowing edges on a dark blueprint grid, so you can see rooms,
-stairs and cameras inside every building at once. A legend and a compass appear on the view. Press
-**Hologram** again for the normal look. CAMS remembers your choice.
+In any 3D view (the **3D** button on a map, or the 3D Map Studio) press **Hologram**. The campus
+becomes a digital blueprint: see-through teal walls with bright edges, darker floors and
+structure, cameras as small glowing shapes, on a dark background with a faint grid and range
+circle, so you can see rooms, stairs and cameras inside every building at once. On the maps the
+model turns slowly by itself; press the round pause button (top right) to stop it, or just drag to
+turn it yourself. A legend runs along the top and the site's GPS position is shown at the bottom.
+Press **Hologram** again for the normal look. CAMS remembers your choice.
 
 In the 3D Map Studio, the **CCTV camera** tool (Tools tab) lists your cameras: **Place** puts a
 camera that is not on the map yet (click on the ground, a floor or a wall), **Move** gives a camera

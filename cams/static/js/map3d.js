@@ -109,7 +109,9 @@ export class Campus3D {
     grid.material.opacity = data.image ? 0.25 : 0.6;
     this.groups.ground.add(grid);
     this.holo.ground = ground; this.holo.hideInHolo = [grid];
-    if (this.holo.on) { this.holo._groundColor = groundMat.color.clone(); groundMat.color.set("#24404d"); grid.userData._wasVisible = true; grid.visible = false; }
+    if (this.holo.on) { [ground, grid].forEach((o) => { o.userData._wasVisible = true; o.visible = false; }); }
+    const site = document.title.replace(/^CAMS - /, "");
+    this.holo.setInfo(`SYS.LOC: ${data.geo ? `${data.geo.lat.toFixed(5)}, ${data.geo.lng.toFixed(5)}` : "GRID " + Math.round(W) + "x" + Math.round(H) + " M"} // ${site.toUpperCase()} // CAMS BLUEPRINT`);
 
     // buildings
     this._clear(this.groups.buildings);
@@ -123,6 +125,7 @@ export class Campus3D {
       geo.rotateX(-Math.PI / 2);
       const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: this._hasWorld ? 0.22 : flat ? 0.45 : 0.82, depthWrite: !this._hasWorld });
       const mesh = new THREE.Mesh(geo, mat);
+      mesh.userData.holoFaint = flat;          // zones, fields, gates: faint in the hologram
       this.groups.buildings.add(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: edgeColor }));
       this.groups.buildings.add(edges);
@@ -197,7 +200,6 @@ export class Campus3D {
       if (this._paintImg) g.drawImage(this._paintImg, 0, 0, W, H);
       const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
       mat.map?.dispose(); mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true;
-      if (this.holo.on) { this.holo._groundColor = new THREE.Color(0xffffff); mat.color.set("#24404d"); }
     };
     if (data.image && showImage) { const im = new Image(); im.onload = () => draw(im); im.onerror = () => draw(null); im.src = data.image; }
     else if (this._paintImg || this._hasWorld) draw(null);
