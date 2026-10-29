@@ -5,7 +5,9 @@
 //   Middle drag ............. slide (pan)      Wheel = zoom to the cursor
 //   Left drag (empty space) . orbit around the point you grabbed
 //   Walk mode ............... walk at eye height, climb stairs, Space to jump
+// With "Swap mouse buttons" (Settings > Maps and mouse) the left and right buttons change places.
 import * as THREE from "three";
+import { mouseSwapped } from "./util.js";
 
 const TYPING = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
@@ -118,6 +120,11 @@ export class CameraRig {
   }
 
   // ------------------------------------------------------------ mouse
+  startLook(e) {
+    this._drag = { kind: "look", x: e.clientX, y: e.clientY };
+    this.dom.setPointerCapture?.(e.pointerId);
+  }
+
   startOrbit(e, pivot) {
     this._drag = { kind: "orbit", x: e.clientX, y: e.clientY, pivot: pivot || this._pivotAhead() };
     this.dom.setPointerCapture?.(e.pointerId);
@@ -132,13 +139,18 @@ export class CameraRig {
 
   _down(e) {
     if (!this.enabled || this.mode === "walk") return;
-    if (e.button === 2) { this._drag = { kind: "look", x: e.clientX, y: e.clientY }; this.dom.setPointerCapture?.(e.pointerId); }
+    const swap = mouseSwapped();
+    const lookBtn = swap ? 0 : 2, orbitBtn = swap ? 2 : 0;
+    // the left button is only taken here where it is not needed for drawing (leftOrbit views);
+    // in Map Studio the studio decides what a left drag on empty space does
+    if (e.button === 0 && e.altKey) this.startOrbit(e, this.opts.pick?.(e.clientX, e.clientY));
+    else if (e.button === lookBtn && (lookBtn === 2 || this.opts.leftOrbit)) this.startLook(e);
     else if (e.button === 1) {
       e.preventDefault();
       const hit = this.opts.pick?.(e.clientX, e.clientY);
       const dist = hit ? hit.distanceTo(this.camera.position) : 30;
       this._drag = { kind: "pan", x: e.clientX, y: e.clientY, dist };
-    } else if (e.button === 0 && (e.altKey || this.opts.leftOrbit)) {
+    } else if (e.button === orbitBtn && (orbitBtn === 2 || this.opts.leftOrbit)) {
       this.startOrbit(e, this.opts.pick?.(e.clientX, e.clientY));
     }
   }

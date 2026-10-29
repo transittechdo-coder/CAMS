@@ -19,7 +19,7 @@ import numpy as np
 
 from .config import DEFAULT_SETTINGS
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -226,6 +226,28 @@ CREATE TABLE IF NOT EXISTS person_notes (            -- written observations on 
 CREATE INDEX IF NOT EXISTS idx_notes_person ON person_notes(person_id, day);
 CREATE INDEX IF NOT EXISTS idx_notes_day ON person_notes(day, kind);
 
+-- Video: camera recordings and short clips of sightings -----------------------
+CREATE TABLE IF NOT EXISTS recordings (
+    id          INTEGER PRIMARY KEY,
+    camera_id   INTEGER REFERENCES cameras(id) ON DELETE SET NULL,
+    camera_name TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL,                 -- manual | continuous | clip
+    path        TEXT NOT NULL,                 -- relative to the recordings folder
+    start_ts    REAL NOT NULL,
+    end_ts      REAL NOT NULL,
+    fps         REAL NOT NULL,
+    width       INTEGER NOT NULL DEFAULT 0,
+    height      INTEGER NOT NULL DEFAULT 0,
+    frames      INTEGER NOT NULL DEFAULT 0,
+    size_bytes  INTEGER NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL DEFAULT 'done',  -- recording | done
+    keep        INTEGER NOT NULL DEFAULT 0,    -- 1 = never delete automatically
+    note        TEXT NOT NULL DEFAULT '',
+    created_by  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_rec_camera_time ON recordings(camera_id, start_ts);
+CREATE INDEX IF NOT EXISTS idx_rec_kind_time ON recordings(kind, start_ts);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -280,6 +302,13 @@ class Database:
         "cameras": {
             # suspicious-activity rules for this camera (JSON)
             "analytics": "TEXT NOT NULL DEFAULT '{}'",
+            # off | always (record all the time)
+            "record_mode": "TEXT NOT NULL DEFAULT 'off'",
+            # colour for black-and-white video: off | auto (only when the picture is black and white) | always
+            "colour_mode": "TEXT NOT NULL DEFAULT 'off'",
+        },
+        "sightings": {
+            "clip_id": "INTEGER",          # recordings.id of the short clip of this sighting
         },
         "alerts": {
             "snapshot_path": "TEXT",

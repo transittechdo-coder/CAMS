@@ -2,6 +2,8 @@
 // In builder mode it also lets you draw shapes and drag cameras into place.
 // World units are metres; x to the right, y down (same as the map image).
 
+import { mouseSwapped } from "./util.js";
+
 const NS = "http://www.w3.org/2000/svg";
 const FOV_RANGE_M = 14;
 
@@ -18,6 +20,8 @@ export class SiteMap {
     this.data = { width_m: 200, height_m: 150, image: null, buildings: [], cameras: [] };
     this.pins = [];
     this.trail = [];
+    this.route = [];               // stops of a person's route, oldest first
+    this.routeSel = null;
     this.mode = "select";
     this.selected = null;          // {kind: "building"|"camera", id}
     this.draft = null;             // points being drawn
@@ -41,6 +45,8 @@ export class SiteMap {
   }
   setPins(pins) { this.pins = pins || []; this.render(); }
   setTrail(points) { this.trail = points || []; this.render(); }
+  setRoute(stops) { this.route = stops || []; if (this.routeSel != null && this.routeSel >= this.route.length) this.routeSel = null; this.render(); }
+  selectStop(i) { this.routeSel = i; this.render(); }
   setMode(mode) { this.mode = mode; this.draft = null; this.svg.style.cursor = mode === "select" ? "" : "crosshair"; this.render(); }
   select(sel) { this.selected = sel; this.render(); }
 
@@ -142,8 +148,10 @@ export class SiteMap {
       }
     }
 
+    // a person's route: arrows from place to place, numbered stops, small pictures
+    if (this.route.length) this._renderRoute(g, px);
     // trail of a person's movement
-    if (this.trail.length > 1) {
+    else if (this.trail.length > 1) {
       g.append(s("polyline", { class: "trail", points: this.trail.map((p) => `${p.x},${p.y}`).join(" ") }));
     }
     // pins (last-seen markers)
@@ -181,6 +189,75 @@ export class SiteMap {
     g.append(sg);
   }
 
+  _renderRoute(g, px) {
+    const stops = this.route;
+    // stops at the same camera are fanned out so each number can be read
+    const seen = new Map();
+    const pos = stops.map((st) => {
+      const k = `${st.x.toFixed(1)},${st.y.toFixed(1)}`;
+      const n = seen.get(k) || 0; seen.set(k, n + 1);
+      if (!n) return [st.x, st.y];
+      const a = n * 2.1, r = (12 + 4 * Math.floor(n / 3)) * px;
+      return [st.x + Math.cos(a) * r, st.y + Math.sin(a) * r];
+    });
+    const lines = s("g", { class: "route" });
+    for (let i = 1; i < pos.length; i++) {
+      const [ax, ay] = pos[i - 1], [bx, by] = pos[i];
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len < 2 * px) continue;
+      const late = i === pos.length - 1;
+      lines.append(s("line", { class: `route-under`, x1: ax, y1: ay, x2: bx, y2: by }));
+      lines.append(s("line", { class: `route-line${late ? " last" : ""}`, x1: ax, y1: ay, x2: bx, y2: by }));
+      // arrow head half way: shows which way the person went
+      const ux = (bx - ax) / len, uy = (by - ay) / len, mx = ax + (bx - ax) * 0.55, my = ay + (by - ay) * 0.55;
+      const L = 9 * px, W = 5.5 * px;
+      lines.append(s("polygon", { class: "route-arrow", points: [
+        [mx + ux * L / 2, my + uy * L / 2], [mx - ux * L / 2 - uy * W, my - uy * L / 2 + ux * W], [mx - ux * L / 2 + uy * W, my - uy * L / 2 - ux * W],
+      ].map((p) => p.join(",")).join(" ") }));
+    }
+    g.append(lines);
+    const showPics = stops.length <= 14;
+    const marks = s("g", { class: "route-stops" });
+    stops.forEach((st, i) => {
+      const [x, y] = pos[i];
+      const first = i === 0, last = i === stops.length - 1, sel = this.routeSel === i;
+      const grp = s("g", { class: `stop${first ? " first" : ""}${last ? " last" : ""}${sel ? " sel" : ""}`, "data-stop": i, tabindex: 0 });
+      grp.style.cursor = "pointer";
+      const title = s("title"); title.textContent = `${st.n}. ${st.label}${st.sub ? `, ${st.sub}` : ""}${st.clip ? " (click to watch)" : ""}`;
+      grp.append(title);
+      if (last) grp.append(s("circle", { class: "pin-ring", cx: x, cy: y, r: 12 * px }));
+      if ((showPics || sel || last) && st.thumb) {
+        const w = (sel ? 64 : 36) * px, hgt = w;
+        const ix = x + 8 * px, iy = y - 8 * px - hgt;
+        grp.append(s("rect", { class: "stop-pic-frame", x: ix - 1.5 * px, y: iy - 1.5 * px, width: w + 3 * px, height: hgt + 3 * px, rx: 4 * px }));
+        const im = s("image", { x: ix, y: iy, width: w, height: hgt, preserveAspectRatio: "xMidYMid slice" });
+        im.setAttribute("href", st.thumb);
+        grp.append(im);
+        if (st.clip) {
+          const cx = ix + w - 8 * px, cy = iy + hgt - 8 * px;
+          grp.append(s("circle", { class: "stop-play-bg", cx, cy, r: 7 * px }));
+          grp.append(s("polygon", { class: "stop-play", points: `${cx - 2.5 * px},${cy - 4 * px} ${cx - 2.5 * px},${cy + 4 * px} ${cx + 4 * px},${cy}` }));
+        }
+      }
+      grp.append(s("circle", { class: "stop-dot", cx: x, cy: y, r: 9 * px }));
+      const num = s("text", { class: "stop-num", x, y: y + 0.5 * px, "text-anchor": "middle", "dominant-baseline": "middle" });
+      num.style.fontSize = `${10 * px}px`;
+      num.textContent = st.n;
+      grp.append(num);
+      if (first || last || sel) {
+        // the start label goes to the left so it never covers the "Now" label when someone came back
+        const left = first && !last && !sel;
+        const t = s("text", { class: "bld-label stop-label", x: x + (left ? -12 : 12) * px, y: y + 16 * px, "text-anchor": left ? "end" : "start" });
+        t.style.fontSize = `${11.5 * px}px`;
+        t.style.strokeWidth = `${3 * px}px`;
+        t.textContent = `${first && !last ? "From " : last ? "Now: " : ""}${st.label}${st.sub ? `  ${st.sub}` : ""}`;
+        grp.append(t);
+      }
+      marks.append(grp);
+    });
+    g.append(marks);
+  }
+
   // ----------------------------------------------------------- interaction
   _bind() {
     const svg = this.svg;
@@ -197,9 +274,25 @@ export class SiteMap {
       this._applyView();
     }, { passive: false });
 
+    svg.addEventListener("contextmenu", (e) => e.preventDefault());
     svg.addEventListener("pointerdown", (e) => {
       const t = e.target;
       const [wx, wy] = this.toWorld(e);
+      // moving the map: middle button always; the right button when the mouse buttons are swapped
+      if (e.button === 1 || (e.button === 2 && mouseSwapped())) {
+        e.preventDefault();
+        drag = { type: "pan", sx: e.clientX, sy: e.clientY, view: { ...this.view } };
+        svg.setPointerCapture(e.pointerId);
+        return;
+      }
+      if (e.button !== 0) return;
+      const stop = t.closest?.("[data-stop]");
+      if (stop && !this.editable) {
+        const i = +stop.dataset.stop;
+        this.selectStop(i);
+        this.opts.onStop?.(this.route[i], i);
+        return;
+      }
       if (this.editable && this.mode === "polygon") {
         if (this.draft && this.draft.length >= 3 && near(this.draft[0], [wx, wy], 8 * this.px)) return this._finishDraft();
         (this.draft ||= []).push([round1(wx), round1(wy)]);
@@ -230,13 +323,16 @@ export class SiteMap {
         this.opts.onSelect?.({ kind: "building", id });
         if (this.editable) drag = { type: "building", bid: id, last: [wx, wy] };
       } else {
-        drag = { type: "pan", sx: e.clientX, sy: e.clientY, view: { ...this.view } };
+        // left drag on empty ground moves the map (unless the buttons are swapped: then the right button does)
+        if (!mouseSwapped()) drag = { type: "pan", sx: e.clientX, sy: e.clientY, view: { ...this.view } };
         if (this.selected) { this.select(null); this.opts.onSelect?.(null); }
+        if (!drag) return;
       }
       svg.setPointerCapture(e.pointerId);
     });
 
     svg.addEventListener("pointermove", (e) => {
+      if (this.opts.onHover) this.opts.onHover(this.toWorld(e));
       if (this.mode === "polygon" && this.draft) { this._hover = this.toWorld(e); this.render(); }
       if (!drag) return;
       const [wx, wy] = this.toWorld(e);
@@ -284,6 +380,11 @@ export class SiteMap {
     };
     svg.addEventListener("pointerup", end);
     svg.addEventListener("pointercancel", end);
+    svg.addEventListener("pointerleave", () => this.opts.onHover?.(null));
+    svg.addEventListener("keydown", (e) => {
+      const stop = e.target.closest?.("[data-stop]");
+      if (stop && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); const i = +stop.dataset.stop; this.selectStop(i); this.opts.onStop?.(this.route[i], i); }
+    });
     svg.addEventListener("dblclick", (e) => { if (this.mode === "polygon" && this.draft?.length >= 3) { e.preventDefault(); this._finishDraft(); } });
     window.addEventListener("keydown", (this._key = (e) => {
       if (e.key === "Escape" && this.draft) { this.draft = null; this.render(); }

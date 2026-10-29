@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { get } from "./util.js";
 import { buildWorld, disposeGroup, setupLights, fitSunShadow } from "./world3d.js";
 import { CameraRig } from "./camrig.js";
+import { Hologram, savedStyle } from "./hologram.js";
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
@@ -34,6 +35,7 @@ export class Campus3D {
         return hit ? hit.point : null;
       },
     });
+    this.holo = new Hologram(this.scene, { roots: [this.groups.world, this.groups.buildings, this.groups.cameras], container, rig: this.controls });
     this.reloadScene();
     this._ro = new ResizeObserver(() => this._resize());
     this._ro.observe(container);
@@ -43,6 +45,7 @@ export class Campus3D {
       if (!this._running) return;
       const now = performance.now();
       this.controls.update((now - (this._last || now)) / 1000);
+      this.holo.sync();
       this._last = now;
       this._t = (this._t || 0) + 0.03;
       this.groups.marks.children.forEach((m) => { if (m.userData.pulse) m.scale.setScalar(1 + 0.25 * Math.sin(this._t * 3)); });
@@ -54,6 +57,7 @@ export class Campus3D {
 
   destroy() {
     this._running = false;
+    this.holo.dispose();
     this._ro.disconnect();
     this.controls.dispose();
     disposeGroup(this.groups.world);
@@ -72,14 +76,21 @@ export class Campus3D {
   _clear(g) {
     for (const c of [...g.children]) {
       g.remove(c);
-      c.traverse?.((o) => { o.geometry?.dispose(); if (o.material) [].concat(o.material).forEach((m) => { m.map?.dispose(); m.dispose(); }); });
+      c.traverse?.((o) => {
+        if (o.userData.holoEdge) return;                       // shared hologram materials stay
+        o.geometry?.dispose();
+        const mats = [].concat(o.userData.holoOrig || o.material || []);
+        mats.forEach((m) => { m.map?.dispose(); m.dispose(); });
+      });
     }
   }
 
   setData(data) {
     this.data = data;
     const W = data.width_m, H = data.height_m;
-    this.scene.background = new THREE.Color(cssVar("--paper"));
+    if (this.holo.on) this.holo._bg = new THREE.Color(cssVar("--paper"));
+    else this.scene.background = new THREE.Color(cssVar("--paper"));
+    this.holo.setSite(W, H);
 
     // ground
     this._clear(this.groups.ground);
@@ -97,6 +108,10 @@ export class Campus3D {
     grid.material.transparent = true;
     grid.material.opacity = data.image ? 0.25 : 0.6;
     this.groups.ground.add(grid);
+    this.holo.ground = ground; this.holo.hideInHolo = [grid];
+    if (this.holo.on) { [ground, grid].forEach((o) => { o.userData._wasVisible = true; o.visible = false; }); }
+    const site = document.title.replace(/^CAMS - /, "");
+    this.holo.setInfo(`SYS.LOC: ${data.geo ? `${data.geo.lat.toFixed(5)}, ${data.geo.lng.toFixed(5)}` : "GRID " + Math.round(W) + "x" + Math.round(H) + " M"} // ${site.toUpperCase()} // CAMS BLUEPRINT`);
 
     // buildings
     this._clear(this.groups.buildings);
@@ -110,6 +125,7 @@ export class Campus3D {
       geo.rotateX(-Math.PI / 2);
       const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: this._hasWorld ? 0.22 : flat ? 0.45 : 0.82, depthWrite: !this._hasWorld });
       const mesh = new THREE.Mesh(geo, mat);
+      mesh.userData.holoFaint = flat;          // zones, fields, gates: faint in the hologram
       this.groups.buildings.add(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: edgeColor }));
       this.groups.buildings.add(edges);
@@ -140,6 +156,7 @@ export class Campus3D {
       const a = ((c.direction || 0) * Math.PI) / 180;
       cone.lookAt(c.map_x + Math.sin(a), y - 0.4, c.map_y - Math.cos(a));
       cone.rotateX(Math.PI / 2);
+      cone.userData.holoSolid = true;          // cameras glow solid in the hologram view
       this.groups.cameras.add(cone);
       const pole = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(c.map_x, 0, c.map_y), new THREE.Vector3(c.map_x, y, c.map_y)]),
@@ -187,6 +204,8 @@ export class Campus3D {
     if (data.image && showImage) { const im = new Image(); im.onload = () => draw(im); im.onerror = () => draw(null); im.src = data.image; }
     else if (this._paintImg || this._hasWorld) draw(null);
   }
+
+  setStyle(style) { this.holo.set(style === "hologram"); }
 
   setMarks({ pins = [], trail = [] } = {}) {
     this._clear(this.groups.marks);

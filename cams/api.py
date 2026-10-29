@@ -35,6 +35,10 @@ from datetime import datetime
 from .insights import at as day_at, day_bounds, day_str
 from .face_engine import ALL_ANGLES, ANGLES, REFERENCE_ANGLES, ModelsMissing
 from .system import CamsSystem, snapshot_file
+from . import geo
+from .recorder import clear_tmp
+from .colour import MODES as COLOUR_MODES, MODEL_NAME as COLOUR_MODEL
+from starlette.background import BackgroundTask
 
 COOKIE = "cams_session"
 MAX_UPLOAD = 15 * 1024 * 1024
@@ -91,6 +95,8 @@ class CameraIn(BaseModel):
     direction: float = 0
     fov: float = 90
     analytics: dict | None = None
+    record_mode: str = "off"
+    colour_mode: str = "off"
 
 
 class CameraPlaceIn(BaseModel):
@@ -131,6 +137,28 @@ class BuildingIn(BaseModel):
 class MapIn(BaseModel):
     width_m: float = Field(gt=1, le=20000)
     height_m: float = Field(gt=1, le=20000)
+
+
+class GeoIn(BaseModel):
+    lat: float | None = Field(default=None, gt=-85, lt=85)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class SatelliteIn(BaseModel):
+    lat: float = Field(gt=-85, lt=85)
+    lng: float = Field(ge=-180, le=180)
+    width_m: float = Field(ge=10, le=20000)
+    height_m: float = Field(ge=10, le=20000)
+    keep_buildings: bool = True
+
+
+class RecordIn(BaseModel):
+    action: str = "start"          # start | stop
+
+
+class RecordingIn(BaseModel):
+    keep: bool | None = None
+    note: str | None = Field(default=None, max_length=200)
 
 
 # ---------------------------------------------------------------- activity AI
@@ -202,6 +230,7 @@ def _camera_public(sysm: CamsSystem, cam: dict) -> dict:
     out["source_display"] = mask_source(cam["source"])
     out["analytics"] = parse_analytics(cam.get("analytics"))
     out["live"] = sysm.camera_status(cam["id"])
+    out["recording"] = sysm.recorder.active().get(cam["id"], {})
     return out
 
 
@@ -213,7 +242,18 @@ def _last_seen(sysm: CamsSystem, pid: int) -> dict | None:
         "WHERE s.person_id = ? ORDER BY s.last_seen DESC LIMIT 1",
         (pid,),
     )
+    if row:
+        _add_gps(sysm, [row])
     return row
+
+
+def _add_gps(sysm: CamsSystem, rows: list[dict]) -> list[dict]:
+    """Add the exact latitude / longitude of each row's camera when the map is placed on Earth."""
+    g = geo.georef_from_settings(sysm.db.settings())
+    for r in rows:
+        if g and r.get("map_x") is not None and r.get("map_y") is not None:
+            r["lat"], r["lng"] = g.to_latlng(r["map_x"], r["map_y"])
+    return rows
 
 
 def _hours_ok(spec: str) -> bool:
@@ -278,6 +318,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             "site_name": db.get_setting("site_name"),
             "user": user and {k: user[k] for k in ("id", "username", "full_name", "role")},
             "onboarding_done": db.get_setting("onboarding_done") == "1",
+            "map_mouse": db.get_setting("map_mouse") or "standard",
             "ui_loads": sysm.stats.get("ui_loads", 0),
         }
 
@@ -459,6 +500,9 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                           "UNION SELECT image_path FROM activity_examples WHERE person_id = ? AND image_path IS NOT NULL", (pid, pid)):
             (paths.snapshots / s["image_path"]).unlink(missing_ok=True)
         shutil.rmtree(paths.enrollments / str(pid), ignore_errors=True)
+        for r in db.query("SELECT r.* FROM recordings r WHERE r.kind = 'clip' AND r.id IN "
+                          "(SELECT clip_id FROM sightings WHERE person_id = ? AND clip_id IS NOT NULL)", (pid,)):
+            sysm.recorder.delete(r)
         db.execute("DELETE FROM people WHERE id = ?", (pid,))
         if sysm.behaviour:
             sysm.behaviour.reload()
@@ -694,13 +738,15 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         _person_or_404(sysm, pid)
         until = until or time.time() + 60
         rows = db.query(
-            "SELECT s.*, c.map_x, c.map_y, c.floor, c.building_id, b.name AS building_name "
+            "SELECT s.*, c.map_x, c.map_y, c.floor, c.building_id, b.name AS building_name, "
+            "r.start_ts AS clip_start, r.end_ts AS clip_end "
             "FROM sightings s LEFT JOIN cameras c ON c.id = s.camera_id LEFT JOIN buildings b ON b.id = c.building_id "
+            "LEFT JOIN recordings r ON r.id = s.clip_id "
             "WHERE s.person_id = ? AND s.last_seen >= ? AND s.first_seen <= ? ORDER BY s.last_seen DESC LIMIT ?",
             (pid, since, until, min(limit, 2000)),
         )
         db.audit(user["username"], "timeline_view", {"person_id": pid})
-        return rows
+        return _add_gps(sysm, rows)
 
     @app.get("/api/search/last-seen")
     def search_last_seen(q: str, user=viewer):
@@ -777,18 +823,25 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         analytics = json.dumps(parse_analytics(body.analytics))
         if kind not in ("usb", "rtsp", "http", "file"):
             raise HTTPException(400, "Unknown camera type.")
+        if body.record_mode not in ("off", "always"):
+            raise HTTPException(400, "Recording must be off or always.")
+        if body.colour_mode not in COLOUR_MODES:
+            raise HTTPException(400, "Colour must be off, auto or always.")
         return (body.name.strip(), body.source.strip(), kind, int(body.enabled), int(body.restricted),
-                body.building_id, body.floor, body.map_x, body.map_y, body.direction % 360, body.fov, analytics)
+                body.building_id, body.floor, body.map_x, body.map_y, body.direction % 360, body.fov, analytics,
+                body.record_mode, body.colour_mode)
 
     @app.post("/api/cameras")
     def add_camera(body: CameraIn, user=operator):
         cid = db.execute(
             "INSERT INTO cameras(name, source, kind, enabled, restricted, building_id, floor, map_x, map_y, direction, "
-            "fov, analytics, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fov, analytics, record_mode, colour_mode, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             _cam_values(body) + (time.time(),),
         )
+        sysm.colour.refresh_modes()
         sysm.refresh_areas()
         sysm.restart_camera(cid)
+        sysm.recorder.sync_continuous()
         db.audit(user["username"], "camera_add", {"id": cid, "name": body.name})
         return {"id": cid}
 
@@ -803,11 +856,13 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             values = (values[0], old["source"]) + values[2:]
         db.execute(
             "UPDATE cameras SET name=?, source=?, kind=?, enabled=?, restricted=?, building_id=?, floor=?, map_x=?, "
-            "map_y=?, direction=?, fov=?, analytics=? WHERE id=?",
+            "map_y=?, direction=?, fov=?, analytics=?, record_mode=?, colour_mode=? WHERE id=?",
             values + (cid,),
         )
+        sysm.colour.refresh_modes()
         sysm.refresh_areas()
         sysm.restart_camera(cid)
+        sysm.recorder.sync_continuous()
         db.audit(user["username"], "camera_update", {"id": cid})
         return {"ok": True}
 
@@ -839,8 +894,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.delete("/api/cameras/{cid}")
     def delete_camera(cid: int, user=operator):
+        sysm.recorder.stop(cid)
         sysm.stop_camera(cid)
         db.execute("DELETE FROM cameras WHERE id = ?", (cid,))
+        sysm.recorder.sync_continuous()
         db.audit(user["username"], "camera_delete", {"id": cid})
         return {"ok": True}
 
@@ -885,13 +942,198 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+    # ------------------------------------------------------------ colour for black-and-white video
+    @app.get("/api/colour")
+    def colour_status(user=viewer):
+        return sysm.colour.status()
+
+    @app.post("/api/colour/download")
+    def colour_download(user=admin):
+        sysm.colour.start_download()
+        db.audit(user["username"], "colour_ai_download")
+        return sysm.colour.status()
+
+    @app.post("/api/colour/model")
+    async def colour_upload(file: UploadFile = File(...), user=admin):
+        sysm.paths.user_models.mkdir(parents=True, exist_ok=True)
+        tmp = sysm.paths.user_models / (COLOUR_MODEL + ".upload")
+        size = 0
+        with open(tmp, "wb") as f:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > 600 * 1024 * 1024:
+                    f.close()
+                    tmp.unlink(missing_ok=True)
+                    raise HTTPException(413, "That file is too large to be the colour AI.")
+                f.write(chunk)
+        try:
+            sysm.colour.install(tmp)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        db.audit(user["username"], "colour_ai_install", {"bytes": size})
+        return sysm.colour.status()
+
+    @app.delete("/api/colour/model")
+    def colour_remove(user=admin):
+        sysm.colour.model_path.unlink(missing_ok=True)
+        sysm.colour.load()
+        db.audit(user["username"], "colour_ai_remove")
+        return sysm.colour.status()
+
+    # ------------------------------------------------------------ recordings and clips
+    def _rec_or_404(rid: int) -> dict:
+        r = db.one("SELECT * FROM recordings WHERE id = ?", (rid,))
+        if not r:
+            raise HTTPException(404, "Recording not found (it may have been deleted).")
+        return r
+
+    def _rec_out(r: dict) -> dict:
+        out = dict(r)
+        out.pop("path", None)
+        out["duration"] = round((time.time() if r["status"] == "recording" else r["end_ts"]) - r["start_ts"], 1)
+        out["ext"] = Path(r["path"]).suffix
+        return out
+
+    @app.post("/api/cameras/{cid}/record")
+    def record(cid: int, body: RecordIn, user=operator):
+        if not db.one("SELECT id FROM cameras WHERE id = ?", (cid,)):
+            raise HTTPException(404, "Camera not found.")
+        if body.action == "start":
+            if sysm.camera_status(cid)["status"] != "online":
+                raise HTTPException(409, "This camera is not sending pictures right now, so it cannot be recorded.")
+            out = sysm.recorder.start(cid, user["username"])
+            db.audit(user["username"], "record_start", {"camera_id": cid})
+        elif body.action == "stop":
+            out = sysm.recorder.stop(cid)
+            db.audit(user["username"], "record_stop", {"camera_id": cid})
+        else:
+            raise HTTPException(400, "Action must be start or stop.")
+        return out
+
+    @app.get("/api/recordings")
+    def recordings(camera_id: int | None = None, kind: str = "", since: float = 0, until: float = 0,
+                   limit: int = 300, user=viewer):
+        sql = "SELECT * FROM recordings WHERE start_ts < ? AND (end_ts >= ? OR status = 'recording')"
+        params: list[Any] = [until or time.time() + 60, since]
+        if camera_id:
+            sql += " AND camera_id = ?"
+            params.append(camera_id)
+        if kind:
+            sql += " AND kind = ?"
+            params.append(kind)
+        else:
+            sql += " AND kind != 'clip'"
+        sql += " ORDER BY start_ts DESC LIMIT ?"
+        params.append(min(limit, 2000))
+        return [_rec_out(r) for r in db.query(sql, params)]
+
+    @app.get("/api/recordings/summary")
+    def recordings_summary(user=viewer):
+        row = db.one("SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM recordings WHERE kind != 'clip'")
+        clips = db.one("SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS bytes FROM recordings WHERE kind = 'clip'")
+        s = db.settings()
+        return {"recordings": row["n"], "recordings_mb": round(row["bytes"] / 1e6, 1),
+                "clips": clips["n"], "clips_mb": round(clips["bytes"] / 1e6, 1),
+                "active": {str(k): v for k, v in sysm.recorder.active().items()},
+                "limit_gb": float(s.get("recording_max_gb", 50)), "days": int(float(s.get("recording_days", 7)))}
+
+    @app.get("/api/cameras/{cid}/coverage")
+    def coverage(cid: int, since: float, until: float, user=viewer):
+        return sysm.recorder.coverage(cid, since, until)
+
+    @app.get("/api/recordings/{rid}")
+    def recording(rid: int, user=viewer):
+        return _rec_out(_rec_or_404(rid))
+
+    @app.patch("/api/recordings/{rid}")
+    def update_recording(rid: int, body: RecordingIn, user=operator):
+        _rec_or_404(rid)
+        if body.keep is not None:
+            db.execute("UPDATE recordings SET keep = ? WHERE id = ?", (int(body.keep), rid))
+        if body.note is not None:
+            db.execute("UPDATE recordings SET note = ? WHERE id = ?", (body.note.strip(), rid))
+        return {"ok": True}
+
+    @app.delete("/api/recordings/{rid}")
+    def delete_recording(rid: int, user=operator):
+        r = _rec_or_404(rid)
+        if r["status"] == "recording":
+            raise HTTPException(409, "Stop this recording first.")
+        sysm.recorder.delete(r)
+        db.audit(user["username"], "recording_delete", {"id": rid, "camera": r["camera_name"]})
+        return {"ok": True}
+
+    def _ready(r: dict) -> dict:
+        if r["status"] == "recording" and r["camera_id"]:
+            sysm.recorder.cut_open_parts(r["camera_id"])
+            r = _rec_or_404(r["id"])
+        if not sysm.recorder.file(r):
+            raise HTTPException(404, "The video file is missing.")
+        return r
+
+    @app.get("/api/recordings/{rid}/frame.jpg")
+    def recording_frame(rid: int, t: float = 0, user=viewer):
+        r = _rec_or_404(rid)
+        if r["status"] == "recording":
+            raise HTTPException(409, "Still recording.")
+        jpg = sysm.recorder.frame_at(r, t)
+        if not jpg:
+            raise HTTPException(404, "No picture at that time.")
+        return Response(jpg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.get("/api/recordings/{rid}/play")
+    def recording_play(rid: int, start: float = 0, speed: float = 1, user=viewer):
+        r = _ready(_rec_or_404(rid))
+        if r["kind"] != "clip" and start < 0.5:      # log opening a video, not every jump inside it
+            db.audit(user["username"], "recording_view", {"id": rid, "camera": r["camera_name"]})
+        return StreamingResponse(sysm.recorder.stream(r, start, speed),
+                                 media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.get("/api/recordings/{rid}/download")
+    def recording_download(rid: int, user=viewer):
+        r = _ready(_rec_or_404(rid))
+        p = sysm.recorder.file(r)
+        name = f"{r['camera_name'] or 'camera'}-{time.strftime('%Y%m%d-%H%M%S', time.localtime(r['start_ts']))}{p.suffix}"
+        db.audit(user["username"], "recording_download", {"id": rid, "camera": r["camera_name"]})
+        return FileResponse(p, filename=name.replace(" ", "_"), media_type="video/mp4" if p.suffix == ".mp4" else "video/x-msvideo")
+
+    @app.get("/api/cameras/{cid}/export")
+    def export_part(cid: int, start: float, end: float, user=viewer):
+        if not db.one("SELECT id FROM cameras WHERE id = ?", (cid,)) and not db.one(
+                "SELECT id FROM recordings WHERE camera_id = ?", (cid,)):
+            raise HTTPException(404, "Camera not found.")
+        tmp = paths.exports / uuid.uuid4().hex
+        try:
+            out, info = sysm.recorder.export(cid, start, end, tmp)
+        except ValueError as exc:
+            clear_tmp(tmp)
+            raise HTTPException(400, str(exc))
+        except LookupError as exc:
+            clear_tmp(tmp)
+            raise HTTPException(404, str(exc))
+        db.audit(user["username"], "recording_export", {"camera_id": cid, "start": start, "end": end, **info})
+        return FileResponse(out, filename=out.name, media_type="video/mp4" if out.suffix == ".mp4" else "video/x-msvideo",
+                            headers={"X-CAMS-Seconds": str(info["seconds"]), "X-CAMS-Covered": str(info["covered"])},
+                            background=BackgroundTask(clear_tmp, tmp))
+
+    @app.get("/api/sightings/{sid}/clip")
+    def sighting_clip(sid: int, user=viewer):
+        s = db.one("SELECT clip_id FROM sightings WHERE id = ?", (sid,))
+        if not s or not s["clip_id"]:
+            raise HTTPException(404, "There is no clip of this sighting.")
+        return _rec_out(_rec_or_404(s["clip_id"]))
+
     # ------------------------------------------------------------ map builder
     @app.get("/api/map")
     def get_map(user=viewer):
         s = db.settings()
         img = s.get("map_image", "")
+        g = geo.georef_from_settings(s)
         return {
             "image": f"/api/map/image?v={s.get('map_image_v', '0')}" if img else None,
+            "image_source": s.get("map_image_source", "") if img else "",
+            "attribution": geo.ATTRIBUTION if img and s.get("map_image_source") == "satellite" else "",
+            "geo": {"lat": g.lat, "lng": g.lng} if g else None,
             "width_m": float(s.get("map_width_m", 200)),
             "height_m": float(s.get("map_height_m", 150)),
             "buildings": [_building_out(b) for b in db.query("SELECT * FROM buildings ORDER BY id")],
@@ -917,14 +1159,14 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         target = paths.maps / "site.jpg"
         cv2.imwrite(str(target), img, [cv2.IMWRITE_JPEG_QUALITY, 90])
         db.set_settings({"map_image": "site.jpg", "map_image_v": int(time.time()),
-                         "map_image_w": img.shape[1], "map_image_h": img.shape[0]})
+                         "map_image_w": img.shape[1], "map_image_h": img.shape[0], "map_image_source": "upload"})
         db.audit(user["username"], "map_upload")
         return {"ok": True, "width_px": img.shape[1], "height_px": img.shape[0]}
 
     @app.delete("/api/map/image")
     def delete_map_image(user=operator):
         (paths.maps / "site.jpg").unlink(missing_ok=True)
-        db.set_settings({"map_image": ""})
+        db.set_settings({"map_image": "", "map_image_source": ""})
         return {"ok": True}
 
     @app.get("/api/map/image")
@@ -933,6 +1175,87 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         if not p.is_file():
             raise HTTPException(404, "No map image uploaded.")
         return FileResponse(p)
+
+    # ------------------------------------------------------------ real-world position + satellite
+    @app.get("/api/geo")
+    def get_geo(user=viewer):
+        s = db.settings()
+        g = geo.georef_from_settings(s)
+        return {"lat": g.lat if g else None, "lng": g.lng if g else None,
+                "width_m": float(s.get("map_width_m", 200)), "height_m": float(s.get("map_height_m", 150)),
+                "satellite": s.get("map_image_source") == "satellite" and bool(s.get("map_image")),
+                "attribution": geo.ATTRIBUTION, "tiles_mb": round(sysm.tiles.size_bytes() / 1e6, 1)}
+
+    @app.put("/api/geo")
+    def set_geo(body: GeoIn, user=operator):
+        if (body.lat is None) != (body.lng is None):
+            raise HTTPException(400, "Give both latitude and longitude.")
+        db.set_settings({"geo_lat": "" if body.lat is None else body.lat, "geo_lng": "" if body.lng is None else body.lng})
+        db.audit(user["username"], "map_location", {"lat": body.lat, "lng": body.lng})
+        return {"ok": True}
+
+    @app.get("/api/geo/parse")
+    def parse_geo(text: str, user=viewer):
+        r = geo.parse_location(text)
+        if not r:
+            raise HTTPException(400, "CAMS could not read a position from that. Type it like -6.7701, 39.2405 or paste a Google Maps link.")
+        return {"lat": r[0], "lng": r[1]}
+
+    @app.get("/api/geo/search")
+    def search_place(q: str, user=operator):
+        if len(q.strip()) < 2:
+            raise HTTPException(400, "Type a place name.")
+        r = geo.parse_location(q)
+        if r:
+            return [{"name": f"{r[0]:.6f}, {r[1]:.6f}", "lat": r[0], "lng": r[1]}]
+        try:
+            return geo.search_places(q.strip())
+        except geo.GeoError as exc:
+            raise HTTPException(503, str(exc))
+
+    @app.get("/api/geo/tiles/{source}/{z}/{x}/{y}")
+    def geo_tile(source: str, z: int, x: int, y: int, user=viewer):
+        try:
+            data = sysm.tiles.get(source, z, x, y)
+        except geo.GeoError as exc:
+            raise HTTPException(404, str(exc))
+        if not data:
+            raise HTTPException(404, "Tile not available (no internet and not saved before).")
+        media = "image/png" if geo.SOURCES[source][1] == "png" else "image/jpeg"
+        return Response(data, media_type=media, headers={"Cache-Control": "private, max-age=604800"})
+
+    @app.post("/api/geo/satellite")
+    def make_satellite(body: SatelliteIn, user=operator):
+        try:
+            img, info = geo.satellite_picture(sysm.tiles, body.lat, body.lng, body.width_m, body.height_m)
+        except geo.GeoError as exc:
+            raise HTTPException(503, str(exc))
+        target = paths.maps / "site.jpg"
+        old = db.settings()
+        if (paths.maps / "site.jpg").is_file() and old.get("map_image_source") != "satellite":
+            shutil.copy2(target, paths.maps / "site-before-satellite.jpg")
+        cv2.imwrite(str(target), img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        # keep what was drawn in the same place on the ground when the map size changes
+        if body.keep_buildings:
+            ow, oh = float(old.get("map_width_m", 200)), float(old.get("map_height_m", 150))
+            dx, dy = (body.width_m - ow) / 2, (body.height_m - oh) / 2
+            og = geo.georef_from_settings(old)
+            if og:  # map was already on Earth: move drawings so they stay on the same spot
+                ng = geo.Georef(body.lat, body.lng, body.width_m, body.height_m)
+                cx, cy = ng.to_map(*og.to_latlng(ow / 2, oh / 2))
+                dx, dy = cx - ow / 2, cy - oh / 2
+            if abs(dx) > 0.05 or abs(dy) > 0.05:
+                for b in db.query("SELECT id, polygon FROM buildings"):
+                    pts = [[round(x + dx, 1), round(y + dy, 1)] for x, y in json.loads(b["polygon"])]
+                    db.execute("UPDATE buildings SET polygon = ? WHERE id = ?", (json.dumps(pts), b["id"]))
+                db.execute("UPDATE cameras SET map_x = map_x + ?, map_y = map_y + ? WHERE map_x IS NOT NULL", (dx, dy))
+                sysm.refresh_areas()
+        db.set_settings({"map_image": "site.jpg", "map_image_v": int(time.time()), "map_image_source": "satellite",
+                         "map_image_w": img.shape[1], "map_image_h": img.shape[0],
+                         "map_width_m": round(body.width_m, 1), "map_height_m": round(body.height_m, 1),
+                         "geo_lat": round(body.lat, 7), "geo_lng": round(body.lng, 7)})
+        db.audit(user["username"], "map_satellite", {"lat": body.lat, "lng": body.lng, **info})
+        return {"ok": True, **info}
 
     # 3D map drawn in Map Studio: a JSON document of shapes, roofs, stairs, paint...
     SCENE_MAX = 30 * 1024 * 1024
@@ -1045,7 +1368,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     # ------------------------------------------------------------ settings / admin
     EDITABLE = {"site_name", "match_threshold", "analysis_fps", "sighting_merge_seconds", "retention_days",
-                "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time"}
+                "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
+                "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
+                "recording_max_gb", "colour_enhance", "colour_refresh"}
+    PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
     @app.get("/api/settings")
     def get_settings(user=viewer):
@@ -1055,7 +1381,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     @app.put("/api/settings")
     def put_settings(body: dict, user=Depends(current_user)):
         values = {k: v for k, v in body.items() if k in EDITABLE}
-        if set(values) - {"onboarding_done", "map_mode"} and not auth.role_at_least(user, "admin"):
+        if set(values) - PERSONAL and not auth.role_at_least(user, "admin"):
             raise HTTPException(403, "Only an admin can change settings.")
         try:
             if "match_threshold" in values and not 0.25 <= float(values["match_threshold"]) <= 0.9:
@@ -1068,11 +1394,29 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Activity AI must be on or off.")
             if "retention_days" in values and not 1 <= int(values["retention_days"]) <= 3650:
                 raise HTTPException(400, "Keep records for 1 to 3650 days.")
+            if "map_mouse" in values and values["map_mouse"] not in ("standard", "swapped"):
+                raise HTTPException(400, "Mouse buttons must be standard or swapped.")
+            if "sighting_clips" in values and str(values["sighting_clips"]) not in ("0", "1"):
+                raise HTTPException(400, "Sighting clips must be on or off.")
+            if "clip_seconds" in values and not 3 <= float(values["clip_seconds"]) <= 30:
+                raise HTTPException(400, "Clips must be 3 to 30 seconds long.")
+            if "record_fps" in values and not 1 <= float(values["record_fps"]) <= 25:
+                raise HTTPException(400, "Record 1 to 25 pictures a second.")
+            if "record_width" in values and int(values["record_width"]) not in (640, 960, 1280, 1920):
+                raise HTTPException(400, "Recording size must be 640, 960, 1280 or 1920 wide.")
+            if "colour_enhance" in values and str(values["colour_enhance"]) not in ("0", "1"):
+                raise HTTPException(400, "Clearer night pictures must be on or off.")
+            if "colour_refresh" in values and not 0.15 <= float(values["colour_refresh"]) <= 10:
+                raise HTTPException(400, "Colour refresh must be 0.15 to 10 seconds.")
+            if "recording_days" in values and not 1 <= int(values["recording_days"]) <= 365:
+                raise HTTPException(400, "Keep recordings for 1 to 365 days.")
+            if "recording_max_gb" in values and not 1 <= float(values["recording_max_gb"]) <= 20000:
+                raise HTTPException(400, "The recording space must be 1 to 20000 GB.")
         except ValueError:
             raise HTTPException(400, "Please enter a number.")
         db.set_settings(values)
         sysm.invalidate_settings()
-        if set(values) - {"onboarding_done", "map_mode"}:
+        if set(values) - PERSONAL:
             db.audit(user["username"], "settings", values)
         return {"ok": True}
 

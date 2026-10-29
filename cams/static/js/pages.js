@@ -2,6 +2,7 @@
 import {
   h, get, post, put, patch, del, upload, icon, toast, fail, dialog, confirmBox, field, formValues,
   ago, clock, duration, where, CATEGORIES, PLURAL, cap, thumb, photoUrl, snapUrl, POSE_ICON,
+  gpsLine, playDialog, videoPlayer, fmtTime, fmtSize, setPrefs, prefs, copyText, fmtLatLng,
 } from "./util.js";
 import { MapView } from "./mapview.js";
 import { trailFromSightings, centroid } from "./map2d.js";
@@ -96,7 +97,8 @@ async function live(el) {
       grid.className = `cam-grid size-${v}`;
       seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget)));
     } }, l)));
-  el.append(head("Live cameras", "Green box: recognised. Red: not enrolled (face blurred). Orange: on the watch list.", seg), grid);
+  el.append(head("Live cameras", "Green box: recognised. Red: not enrolled (face blurred). Orange: on the watch list. Press Record to save a camera's video.", seg,
+    h("button", { onclick: () => go("recordings") }, icon("recordings"), "Recordings")), grid);
   const cams = (await get("/api/cameras")).filter((c) => c.enabled);
   if (!cams.length) {
     grid.replaceWith(h("div", { class: "panel" }, emptyState("No cameras yet", "Add an IP, USB or Ethernet camera to see it here.",
@@ -109,14 +111,37 @@ async function live(el) {
     const dot = h("span", { class: `dot ${c.live.status}` });
     const meta = h("span", { class: "num" }, "");
     const off = h("div", { class: "cam-off hidden" });
-    caps.set(c.id, { dot, meta, off, img });
-    grid.append(h("div", { class: "cam-tile", ondblclick: () => img.requestFullscreen?.() }, img, off,
-      h("div", { class: "cam-cap" }, dot, h("b", {}, c.name), meta)));
+    const recBadge = h("span", { class: "rec-badge hidden" }, icon("rec"), h("span", { class: "num" }, "REC"));
+    const colourTag = h("span", { class: "tag violet hidden", title: "This black-and-white camera is coloured by the AI. The colours are a guess." }, "AI colour");
+    const recBtn = can("operator") ? h("button", { class: "small rec-btn", title: "Record this camera", onclick: async (e) => {
+      e.stopPropagation();
+      const on = recBtn.dataset.on === "1";
+      recBtn.disabled = true;
+      try {
+        await post(`/api/cameras/${c.id}/record`, { action: on ? "stop" : "start" });
+        toast(on ? `Recording of ${c.name} saved. Find it under Recordings.` : `Recording ${c.name}...`);
+        await refresh();
+      } catch (ex) { fail(ex); }
+      recBtn.disabled = false;
+    } }, icon("rec"), "Record") : null;
+    caps.set(c.id, { dot, meta, off, img, recBadge, recBtn, colourTag });
+    grid.append(h("div", { class: "cam-tile", ondblclick: () => img.requestFullscreen?.() }, img, off, recBadge,
+      h("div", { class: "cam-cap" }, dot, h("b", {}, c.name), colourTag, meta, recBtn)));
   }
   async function refresh() {
     for (const c of await get("/api/cameras")) {
       const t = caps.get(c.id);
       if (!t) continue;
+      t.colourTag.classList.toggle("hidden", !c.live.colour);
+      const rec = c.recording || {};
+      const since = rec.manual || rec.continuous;
+      t.recBadge.classList.toggle("hidden", !since);
+      if (since) t.recBadge.lastChild.textContent = `REC ${fmtTime(Date.now() / 1000 - since)}${rec.manual ? "" : " (all the time)"}`;
+      if (t.recBtn) {
+        t.recBtn.dataset.on = rec.manual ? "1" : "0";
+        t.recBtn.classList.toggle("danger", !!rec.manual);
+        t.recBtn.replaceChildren(icon(rec.manual ? "stop" : "rec"), rec.manual ? "Stop" : "Record");
+      }
       t.dot.className = `dot ${c.live.status}`;
       t.meta.textContent = c.live.status === "online" ? `${c.live.faces || 0} face${c.live.faces === 1 ? "" : "s"}` : c.live.status;
       t.off.textContent = c.live.status === "offline" ? c.live.error : "";
@@ -124,7 +149,7 @@ async function live(el) {
     }
   }
   refresh();
-  const timer = setInterval(() => refresh().catch(() => {}), 3000);
+  const timer = setInterval(() => refresh().catch(() => {}), 2000);
   return () => { clearInterval(timer); caps.forEach((t) => t.img.removeAttribute("src")); };
 }
 
@@ -189,9 +214,11 @@ async function find(el, pid) {
     results.classList.add("hidden");
     const ls = p.last_seen;
     const rangeSel = h("select", { "aria-label": "Time range" },
-      [["86400", "Last 24 hours"], ["today", "Today"], ["604800", "Last 7 days"], ["2592000", "Last 30 days"]].map(([v, l]) => h("option", { value: v }, l)));
-    const tl = h("ul", { class: "timeline" });
+      [["today", "Today"], ["86400", "Last 24 hours"], ["604800", "Last 7 days"], ["2592000", "Last 30 days"]].map(([v, l]) => h("option", { value: v }, l)));
+    const tl = h("ul", { class: "timeline route-list" });
+    const summary = h("p", { class: "route-summary" });
     const mapBox = h("div");
+    const first = p.full_name.split(" ")[0];
     detail.append(
       h("div", { class: "panel", style: { marginBottom: "16px" } }, h("div", { class: "panel-body person-head" },
         thumb(photoUrl(p), "thumb xl"),
@@ -202,33 +229,78 @@ async function find(el, pid) {
           h("p", { style: { marginTop: "10px", fontSize: "16px" } }, ls
             ? [h("strong", { class: "num" }, `Last seen ${ago(ls.last_seen)}`), ` at ${where(ls)} (${clock(ls.last_seen)})`]
             : "Not seen by any camera yet."),
+          ls ? gpsLine(ls, "Exact place:") : null,
         ),
         h("div", { class: "stack" }, ls?.snapshot_path ? thumb(snapUrl(ls), "thumb xl", "Last sighting") : null,
+          ls?.clip_id ? h("button", { class: "small", onclick: () => watch(ls, p.full_name) }, icon("play"), "Watch") : null,
           can("operator") ? h("button", { class: "small", onclick: () => go("person", p.id) }, "Edit person") : null),
       )),
       h("div", { class: "split" }, mapBox,
-        h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h2", {}, "Movements"), rangeSel), h("div", { class: "panel-body" }, tl))),
+        h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h2", {}, "Route"), rangeSel),
+          h("div", { class: "panel-body" }, summary, tl))),
     );
-    const map = new MapView(mapBox, { height: "mid" });
+    const map = new MapView(mapBox, { height: "mid", mapOpts: { onStop: (st, i) => { markItem(i); if (st.clip) watch(st.rows[0], p.full_name, st); } } });
     await map.load();
-    async function loadTimeline() {
+    let stops = [], items = [], lastKey = "";
+
+    function markItem(i) {
+      items.forEach((li, k) => li.classList.toggle("sel", k === i));
+      items[i]?.scrollIntoView({ block: "nearest" });
+    }
+
+    async function loadTimeline(auto = false) {
       let since;
       if (rangeSel.value === "today") { const d = new Date(); d.setHours(0, 0, 0, 0); since = d.getTime() / 1000; }
       else since = Date.now() / 1000 - Number(rangeSel.value);
       const rows = await get(`/api/people/${id}/timeline?since=${since}`);
-      tl.replaceChildren(...(rows.length ? rows.map((s) => h("li", {},
-        h("div", { class: "when" }, clock(s.first_seen), s.last_seen - s.first_seen > 30 ? ` to ${clock(s.last_seen)}` : ""),
-        h("div", {}, s.camera_name, s.building_name ? `, ${s.building_name}` : ""),
-        h("div", { class: "hint" }, `${duration(s.first_seen, s.last_seen)}, ${Math.round(s.confidence * 100)}% match`),
-      )) : [h("li", {}, h("span", { class: "muted" }, "No sightings in this period."))]));
-      const trail = trailFromSightings(rows);
-      const pin = pinFor(rows[0] || ls, p.full_name.split(" ")[0], { pulse: true });
-      map.setMarks({ pins: pin ? [pin] : [], trail });
-      if (pin && map.mode === "2d") map.map2d.focus(pin.x, pin.y, 90);
+      const key = rows.map((r) => `${r.id}:${r.last_seen}:${r.clip_id}`).join("|");
+      if (auto && key === lastKey) return;          // nothing new: keep the user's selection
+      lastKey = key;
+      stops = routeStops(rows, map);
+      const placed = stops.filter((s) => s.x != null);
+      const names = [];
+      for (const st of stops) if (names[names.length - 1] !== st.label) names.push(st.label);
+      summary.replaceChildren(...(stops.length ? [
+        h("span", { class: "muted" }, stops.length === 1 ? "Seen at " : `${first} went from `),
+        ...names.flatMap((n, i) => [...(i ? [h("span", { class: "arrow", "aria-label": "then" }, " → ")] : []), h("b", {}, n)]),
+      ] : [h("span", { class: "muted" }, "No sightings in this period.")]));
+      items = stops.map((st, i) => {
+        const li = h("li", { tabindex: 0, onclick: () => pick(i), onkeydown: (e) => e.key === "Enter" && pick(i) },
+          h("span", { class: `stop-badge${i === stops.length - 1 ? " last" : i === 0 ? " first" : ""}` }, st.n),
+          h("div", { class: "grow" },
+            h("div", { class: "when" }, clock(st.from), st.to - st.from > 30 ? ` to ${clock(st.to)}` : ""),
+            h("div", {}, h("b", {}, st.label), st.label !== st.camera ? h("span", { class: "muted" }, `, ${st.camera}`) : null),
+            h("div", { class: "hint" }, `${duration(st.from, st.to)}${st.rows.length > 1 ? `, seen ${st.rows.length} times` : ""}, ${Math.round(st.confidence * 100)}% match`),
+            st.lat != null ? gpsLine(st) : null),
+          h("div", { class: "stop-media" },
+            st.thumb ? thumb(st.thumb, "thumb", `${p.full_name} at ${st.label}`) : null,
+            st.clip ? h("button", { class: "small", onclick: (e) => { e.stopPropagation(); watch(st.rows.find((r) => r.clip_id) || st.rows[0], p.full_name, st); } }, icon("play"), "Watch") : null));
+        return li;
+      });
+      tl.replaceChildren(...(items.length ? [...items].reverse() : [h("li", {}, h("span", { class: "muted" }, "No sightings in this period."))]));
+      map.setRoute(placed);
+      if (!auto) {
+        const last = placed[placed.length - 1];
+        if (last && map.mode === "2d") {
+          if (placed.length > 1) {
+            const xs = placed.map((s) => s.x), ys = placed.map((s) => s.y);
+            const span = Math.max(60, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) * 1.4;
+            map.map2d.focus((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...ys) + Math.min(...ys)) / 2, span);
+          } else map.map2d.focus(last.x, last.y, 90);
+        }
+      }
     }
+
+    function pick(i) {
+      markItem(i);
+      const st = stops[i];
+      const k = map.route.indexOf(st);
+      if (k >= 0) { map.selectStop(k); if (map.mode === "2d") map.map2d.focus(st.x, st.y, 70); }
+    }
+
     rangeSel.addEventListener("change", () => loadTimeline().catch(fail));
     await loadTimeline();
-    const t = setInterval(() => loadTimeline().catch(() => {}), 10000);
+    const t = setInterval(() => loadTimeline(true).catch(() => {}), 10000);
     cleanup = () => { clearInterval(t); map.destroy(); };
   }
 
@@ -238,6 +310,40 @@ async function find(el, pid) {
 }
 
 // ======================================================================= people
+// Group a person's sightings (newest first) into the stops of their route, oldest first.
+// Sightings in a row on the same camera are one stop.
+function routeStops(rows, map) {
+  const stops = [];
+  for (const r of rows.slice().reverse()) {
+    const prev = stops[stops.length - 1];
+    if (prev && prev.camera_id === r.camera_id) {
+      prev.to = Math.max(prev.to, r.last_seen);
+      prev.rows.push(r);
+      prev.confidence = Math.max(prev.confidence, r.confidence);
+      if (!prev.clip && r.clip_id) prev.clip = r.clip_id;
+      if (r.snapshot_path) prev.thumb = snapUrl(r);
+      continue;
+    }
+    const ll = r.lat != null ? { lat: r.lat, lng: r.lng } : map.latLng(r.map_x, r.map_y);
+    stops.push({
+      camera_id: r.camera_id, x: r.map_x ?? null, y: r.map_y ?? null,
+      from: r.first_seen, to: r.last_seen, label: r.building_name || r.camera_name, camera: r.camera_name,
+      rows: [r], thumb: snapUrl(r), clip: r.clip_id || null, confidence: r.confidence, sub: "",
+      lat: ll?.lat ?? null, lng: ll?.lng ?? null,
+    });
+  }
+  stops.forEach((st, i) => { st.n = i + 1; st.sub = clock(st.from); });
+  return stops;
+}
+
+async function watch(sighting, name, stop) {
+  try {
+    const rec = await get(`/api/sightings/${sighting.id}/clip`);
+    const place = stop ? stop.label : where(sighting);
+    playDialog(rec, `${name} at ${place}, ${clock(sighting.first_seen)}`);
+  } catch (e) { fail(e); }
+}
+
 function personForm(p = {}) {
   const groups = h("datalist", { id: "groups-list" });
   get("/api/people/groups").then((g) => groups.replaceChildren(...g.map((x) => h("option", { value: x })))).catch(() => {});
@@ -372,7 +478,7 @@ async function person(el, id) {
 }
 
 // ======================================================================= cameras
-function cameraDialog(cam, after) {
+export function cameraDialog(cam, after) {
   const isNew = !cam;
   cam = cam || { name: "", source: "", restricted: 0, enabled: 1 };
   const templates = get("/api/cameras/templates");
@@ -412,16 +518,24 @@ function cameraDialog(cam, after) {
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "enabled", checked: cam.enabled !== 0 }), "Camera is on"),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "restricted", checked: !!cam.restricted }),
       "Restricted area: alert me when someone who is not enrolled appears"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "record_always", checked: cam.record_mode === "always" }),
+      "Record this camera all the time (kept for the days set in Settings, then deleted)"),
+    field("Colour for black-and-white video", h("select", { name: "colour_mode" },
+      [["off", "Off: show the picture as the camera sends it"],
+       ["auto", "Automatic: colour it when the camera turns black and white (night / infrared)"],
+       ["always", "Always colour this camera (an old black-and-white camera)"]].map(([v, l]) => h("option", { value: v, selected: (cam.colour_mode || "off") === v }, l))),
+      "The colour AI guesses the colours. Never trust the colour of clothes or cars in AI-coloured video. Set it up in Settings > Video."),
   );
   dialog({
     title: isNew ? "Add a camera" : `Edit ${cam.name}`, body,
     actions: [{ label: "Cancel" }, { label: isNew ? "Add camera" : "Save", class: "primary", run: async () => {
       const v = formValues(body);
-      const payload = { ...cam, name: v.name, source: v.source, enabled: v.enabled, restricted: v.restricted, kind: null };
-      delete payload.live; delete payload.source_display;
-      if (isNew) await post("/api/cameras", payload); else await put(`/api/cameras/${cam.id}`, payload);
-      toast(isNew ? "Camera added. Place it on the map in the Campus builder." : "Camera saved");
-      after();
+      const payload = { ...cam, name: v.name, source: v.source, enabled: v.enabled, restricted: v.restricted, kind: null,
+        record_mode: v.record_always ? "always" : "off", colour_mode: v.colour_mode };
+      delete payload.live; delete payload.source_display; delete payload.recording;
+      const r = isNew ? await post("/api/cameras", payload) : await put(`/api/cameras/${cam.id}`, payload);
+      toast(isNew ? "Camera added. Now click where it hangs on the map." : "Camera saved");
+      after(isNew ? r.id : cam.id);
     } }],
   });
 }
@@ -496,6 +610,8 @@ async function cameras(el) {
     body.replaceChildren(...cams.map((c) => h("tr", {},
       h("td", {}, h("span", { class: "row" }, h("span", { class: `dot ${c.enabled ? c.live.status : ""}` }), c.enabled ? c.live.status : "off")),
       h("td", {}, h("b", {}, c.name), c.restricted ? h("span", { class: "tag red", style: { marginLeft: "6px" } }, "Restricted") : null,
+        c.record_mode === "always" ? h("span", { class: "tag", style: { marginLeft: "6px" } }, "Recording all the time") : null,
+        c.colour_mode && c.colour_mode !== "off" ? h("span", { class: "tag violet", style: { marginLeft: "6px" } }, c.colour_mode === "auto" ? "AI colour at night" : "AI colour") : null,
         h("div", { class: "row", style: { gap: "4px", marginTop: "2px" } }, ruleTags(c.analytics).map((t) => h("span", { class: "tag" }, t))),
         c.live.status === "offline" ? h("div", { class: "hint" }, c.live.error) : null),
       h("td", { class: "muted", style: { maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.source_display),
@@ -767,11 +883,18 @@ async function builder(el) {
           toolBtn("rect", "Draw a rectangle", "rect", "Drag on the map to draw a rectangle."),
           toolBtn("polygon", "Draw any shape", "polygon", "Click each corner. Click the first corner (or press Enter) to finish. Esc cancels."))),
       ...props,
-      h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Cameras")),
+      h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Cameras"),
+          h("button", { class: "small primary", title: "Add another CCTV camera and put it on the map", onclick: () => cameraDialog(null, async (id) => {
+            await reload(); placing = id; setMode("camera", "Click on the map where the new camera is mounted.");
+          }) }, icon("plus"), "New camera")),
         h("div", { class: "panel-body stack" },
           unplaced.length ? h("div", { class: "stack" }, h("p", { class: "hint", style: { margin: 0 } }, "Not on the map yet. Choose one, then click where it is."),
             ...unplaced.map((c) => h("button", { class: "tool", "aria-pressed": String(placing === c.id), onclick: () => { placing = c.id; setMode("camera", `Click on the map where "${c.name}" is mounted.`); } }, icon("camera"), c.name)))
-            : h("p", { class: "hint", style: { margin: 0 } }, d.cameras.length ? "All cameras are on the map. Click a camera to adjust it." : "Add cameras on the Cameras page first."),
+            : h("p", { class: "hint", style: { margin: 0 } }, d.cameras.length ? "All cameras are on the map. Drag a camera to move it, or press New camera to add another." : "Press New camera to add your first camera."),
+          d.cameras.filter((c) => c.map_x != null).length ? h("details", {}, h("summary", {}, `On the map (${d.cameras.filter((c) => c.map_x != null).length})`),
+            h("div", { class: "stack", style: { marginTop: "8px" } }, ...d.cameras.filter((c) => c.map_x != null).map((c) => h("div", { class: "row" },
+              h("button", { class: "tool grow", onclick: () => { selected = { kind: "camera", id: c.id }; map.select(selected); map.focus(c.map_x, c.map_y, 60); drawSide(); } }, icon("camera"), c.name),
+              h("button", { class: "small", "aria-pressed": String(placing === c.id), title: "Click a new place for this camera", onclick: () => { placing = c.id; setMode("camera", `Click the new place for "${c.name}".`); } }, "Move"))))) : null,
         )),
       h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "On the map")),
         h("ul", { class: "layer-list" }, d.buildings.map((b) => h("li", { class: bld && bld.id === b.id ? "sel" : "", onclick: () => {
@@ -794,9 +917,14 @@ async function builder(el) {
       const v = formValues(f);
       try { await put("/api/map", { width_m: +v.width_m, height_m: +v.height_m }); map._fitted = false; await reload(); } catch (e) { fail(e); }
     });
+    const g = view.data.geo;
     return h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Site")),
       h("div", { class: "panel-body stack" },
-        h("p", { class: "hint", style: { margin: 0 } }, "Optional: add a plan or satellite picture of your compound and trace over it."),
+        h("button", { class: "primary", onclick: () => satellitePicker(view.data, async () => { map._fitted = false; await reload(); }) },
+          icon("globe"), g ? "Change the real satellite map" : "Use a real satellite map"),
+        g ? h("p", { class: "hint", style: { margin: 0 } }, "Map centre: ", gpsLine(g, "")) :
+          h("p", { class: "hint", style: { margin: 0 } }, "Find your compound on a satellite map of the world. CAMS saves the picture (internet needed once) and then knows the exact GPS position of every camera and sighting."),
+        h("p", { class: "hint", style: { margin: 0 } }, "Or add your own plan picture and trace over it."),
         h("div", { class: "row" }, h("button", { onclick: () => imgIn.click() }, icon("upload"), view.data.image ? "Replace picture" : "Add map picture"), imgIn,
           view.data.image ? h("button", { class: "small danger", onclick: async () => { await del("/api/map/image"); reload(); } }, "Remove") : null),
         f));
@@ -804,6 +932,211 @@ async function builder(el) {
 
   drawSide();
   return () => view.destroy();
+}
+
+// ======================================================================= recordings
+const dayStart = (dateStr) => { const [y, m, d] = dateStr.split("-").map(Number); return new Date(y, m - 1, d).getTime() / 1000; };
+const isoDay = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const hhmm = (ts) => { const d = new Date(ts * 1000); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+
+async function recordings(el) {
+  const cams = await get("/api/cameras");
+  const sumBox = h("div", { class: "hint" });
+  el.append(head("Recordings", "Watch and download what the cameras recorded. Press Record on Live cameras, or set a camera to record all the time on the Cameras page.", sumBox));
+  if (!cams.length) { el.append(h("div", { class: "panel" }, emptyState("No cameras yet", "Add a camera first.", can("operator") ? h("button", { class: "primary", onclick: () => go("cameras") }, "Add a camera") : null))); return; }
+
+  // ---------------- download a part
+  const camSel = h("select", { name: "camera" }, cams.map((c) => h("option", { value: c.id }, c.name)));
+  const dayIn = h("input", { type: "date", value: isoDay(), max: isoDay() });
+  const fromIn = h("input", { type: "time", step: 1, value: hhmm(Date.now() / 1000 - 600) });
+  const toIn = h("input", { type: "time", step: 1, value: hhmm(Date.now() / 1000) });
+  const covBar = h("div", { class: "cov-bar", title: "Shaded = recorded. Click to start the part there." });
+  const covNote = h("p", { class: "hint", style: { margin: 0 } });
+  const dlBtn = h("button", { class: "primary" }, icon("download"), "Download this part");
+  const span = () => {
+    const d0 = dayStart(dayIn.value);
+    const t = (v) => { const [hh, mm, ss = 0] = v.split(":").map(Number); return d0 + hh * 3600 + mm * 60 + ss; };
+    let a = t(fromIn.value), b = t(toIn.value);
+    if (b <= a) b += 86400;                     // past midnight
+    return [a, b];
+  };
+  let coverage = [];
+  async function drawCoverage() {
+    const d0 = dayStart(dayIn.value);
+    coverage = await get(`/api/cameras/${camSel.value}/coverage?since=${d0}&until=${d0 + 86400}`);
+    covBar.replaceChildren(
+      ...[0, 3, 6, 9, 12, 15, 18, 21, 24].map((hr) => h("span", { class: "tick", style: { left: `${(hr / 24) * 100}%` } }, hr < 24 ? `${hr}:00` : "")),
+      ...coverage.map(([a, b]) => h("i", { style: { left: `${((a - d0) / 86400) * 100}%`, width: `${Math.max(0.25, ((b - a) / 86400) * 100)}%` } })),
+    );
+    const [a, b] = span();
+    covBar.append(h("b", { class: "cov-pick", style: { left: `${((a - d0) / 86400) * 100}%`, width: `${Math.max(0.3, ((b - a) / 86400) * 100)}%` } }));
+    const total = coverage.reduce((n, [x, y]) => n + (y - x), 0);
+    covNote.textContent = coverage.length ? `${fmtTime(total)} recorded on this day.` : "Nothing was recorded on this camera on this day.";
+  }
+  covBar.addEventListener("click", (e) => {
+    const r = covBar.getBoundingClientRect();
+    const t = dayStart(dayIn.value) + ((e.clientX - r.left) / r.width) * 86400;
+    fromIn.value = new Date(t * 1000).toTimeString().slice(0, 8);
+    toIn.value = new Date((t + 300) * 1000).toTimeString().slice(0, 8);
+    drawCoverage().catch(fail);
+  });
+  [camSel, dayIn, fromIn, toIn].forEach((x) => x.addEventListener("change", () => drawCoverage().catch(fail)));
+  dlBtn.onclick = async () => {
+    const [a, b] = span();
+    if (b - a > 3 * 3600) return toast("Download at most 3 hours at a time.", "error");
+    await drawCoverage().catch(() => {});
+    const covered = coverage.reduce((n, [x, y]) => n + Math.max(0, Math.min(b, y) - Math.max(a, x)), 0);
+    if (covered < 0.5) return toast("Nothing was recorded on this camera at that time. Shaded parts of the bar were recorded.", "error");
+    const link = h("a", { href: `/api/cameras/${camSel.value}/export?start=${a}&end=${b}`, download: "" });
+    document.body.append(link); link.click(); link.remove();
+    toast(covered < b - a - 2 ? `Downloading. Only ${fmtTime(covered)} of that time was recorded; gaps are left out.` : "Downloading the video. It goes to your Downloads folder.");
+  };
+  el.append(h("section", { class: "panel", style: { marginBottom: "16px" } },
+    h("div", { class: "panel-head" }, h("h2", {}, "Download a part of a camera's video")),
+    h("div", { class: "panel-body stack" },
+      h("div", { class: "grid4" }, field("Camera", camSel), field("Day", dayIn), field("From", fromIn), field("To", toIn)),
+      covBar, covNote, h("div", { class: "row" }, dlBtn,
+        h("span", { class: "hint" }, "The video is an .mp4 file. It opens in Windows Media Player, Films & TV or VLC.")))));
+
+  // ---------------- list
+  const listCam = h("select", { "aria-label": "Camera" }, h("option", { value: "" }, "All cameras"), cams.map((c) => h("option", { value: c.id }, c.name)));
+  const listDay = h("input", { type: "date", value: isoDay(), max: isoDay(), "aria-label": "Day" });
+  const body = h("tbody");
+  el.append(h("section", { class: "panel" },
+    h("div", { class: "panel-head" }, h("h2", {}, "Recorded videos"), listCam, listDay),
+    h("div", { style: { overflowX: "auto" } }, h("table", { class: "list" },
+      h("thead", {}, h("tr", {}, ["Camera", "Started", "Length", "Size", "", ""].map((t) => h("th", {}, t)))), body))));
+  const KIND = { manual: ["Recorded", "teal"], continuous: ["All the time", ""] };
+  async function load() {
+    const d0 = dayStart(listDay.value);
+    const rows = await get(`/api/recordings?since=${d0}&until=${d0 + 86400}${listCam.value ? `&camera_id=${listCam.value}` : ""}`);
+    const sum = await get("/api/recordings/summary");
+    sumBox.textContent = `${sum.recordings} videos, ${fmtSize(sum.recordings_mb * 1e6)} (limit ${sum.limit_gb} GB, kept ${sum.days} days). Sighting clips: ${sum.clips}.`;
+    if (!rows.length) { body.replaceChildren(h("tr", {}, h("td", { colspan: 6 }, emptyState("No videos on this day", "Press Record on a live camera to save its video.")))); return; }
+    body.replaceChildren(...rows.map((r) => {
+      const live = r.status === "recording";
+      return h("tr", {},
+        h("td", {}, h("b", {}, r.camera_name), " ", h("span", { class: `tag ${KIND[r.kind]?.[1] || ""}` }, KIND[r.kind]?.[0] || r.kind),
+          r.keep ? h("span", { class: "tag amber", style: { marginLeft: "4px" } }, "Kept") : null),
+        h("td", { class: "num" }, new Date(r.start_ts * 1000).toLocaleTimeString()),
+        h("td", { class: "num" }, live ? h("span", { class: "rec-dot" }, `Recording ${fmtTime(r.duration)}`) : fmtTime(r.duration)),
+        h("td", { class: "num muted" }, live ? "" : fmtSize(r.size_bytes)),
+        h("td", {}, h("div", { class: "row end" },
+          live ? (can("operator") && r.kind === "manual" ? h("button", { class: "small danger", onclick: async () => { await post(`/api/cameras/${r.camera_id}/record`, { action: "stop" }); load(); } }, icon("stop"), "Stop") : null)
+            : [h("button", { class: "small", onclick: () => playDialog(r) }, icon("play"), "Play"),
+              h("a", { class: "btn small", href: `/api/recordings/${r.id}/download`, download: "" }, icon("download"), "Download")],
+          can("operator") && !live ? h("button", { class: "small", title: r.keep ? "Allow automatic deletion" : "Keep: never delete automatically", "aria-pressed": String(!!r.keep),
+            onclick: async () => { await patch(`/api/recordings/${r.id}`, { keep: !r.keep }); load(); } }, icon("star"), r.keep ? "Kept" : "Keep") : null,
+          can("operator") && !live ? h("button", { class: "small danger", onclick: async () => {
+            if (await confirmBox("Delete this video?", `${r.camera_name}, ${clock(r.start_ts)} (${fmtTime(r.duration)}) will be deleted.`)) { await del(`/api/recordings/${r.id}`); load(); }
+          } }, "Delete") : null)),
+        h("td", {}));
+    }));
+  }
+  [listCam, listDay].forEach((x) => x.addEventListener("change", () => load().catch(fail)));
+  await Promise.all([drawCoverage(), load()]);
+  const t = setInterval(() => { load().catch(() => {}); }, 5000);
+  return () => clearInterval(t);
+}
+
+// ======================================================================= satellite picker
+let leafletReady = null;
+function loadLeaflet() {
+  leafletReady ||= new Promise((resolve, reject) => {
+    document.head.append(h("link", { rel: "stylesheet", href: "/static/vendor/leaflet/leaflet.css" }));
+    const sc = h("script", { src: "/static/vendor/leaflet/leaflet.js" });
+    sc.onload = () => resolve(window.L);
+    sc.onerror = () => { leafletReady = null; reject(new Error("The map tool did not load.")); };
+    document.head.append(sc);
+  });
+  return leafletReady;
+}
+
+async function satellitePicker(data, after) {
+  const L = await loadLeaflet();
+  const box = h("div", { class: "sat-map" });
+  const frame = h("div", { class: "sat-frame" }, h("span", { class: "sat-size num" }));
+  const warn = h("div", { class: "banner amber hidden" }, "The satellite map is not loading. CAMS needs the internet once to fetch the picture of your compound. Check the connection and try again. Places viewed before still show.");
+  const q = h("input", { type: "search", placeholder: "Place name, Google Maps link or coordinates, e.g. -6.7627, 39.2443", "aria-label": "Find a place" });
+  const found = h("div", { class: "chips" });
+  const labels = h("input", { type: "checkbox", checked: true });
+  const keep = h("input", { type: "checkbox", checked: true });
+  const body = h("div", { class: "stack" },
+    h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); find(); } }, h("div", { class: "search grow" }, icon("search"), q), h("button", { type: "submit" }, "Find")),
+    found, warn,
+    h("div", { class: "sat-wrap" }, box, frame),
+    h("div", { class: "row" },
+      h("label", { class: "check" }, labels, "Show place names"),
+      data.buildings.length || data.cameras.some((c) => c.map_x != null) ? h("label", { class: "check" }, keep, "Keep my buildings and cameras where they are on the ground") : null),
+    h("p", { class: "hint", style: { margin: 0 } }, "Move and zoom the map until your whole compound fits inside the box (scroll to zoom, drag to move). The box becomes your campus map. ",
+      "Satellite imagery: Esri, Maxar, Earthstar Geographics. Place search: OpenStreetMap."),
+  );
+  let m;
+  const centre = data.geo ? [data.geo.lat, data.geo.lng] : [-6.7924, 39.2083];   // Dar es Salaam until a place is chosen
+  const area = () => {
+    const mr = box.getBoundingClientRect(), fr = frame.getBoundingClientRect();
+    const x0 = fr.left - mr.left, y0 = fr.top - mr.top, x1 = x0 + fr.width, y1 = y0 + fr.height;
+    const ll = (x, y) => m.containerPointToLatLng([x, y]);
+    const c = ll((x0 + x1) / 2, (y0 + y1) / 2);
+    return { lat: c.lat, lng: c.lng, width_m: ll(x0, (y0 + y1) / 2).distanceTo(ll(x1, (y0 + y1) / 2)), height_m: ll((x0 + x1) / 2, y0).distanceTo(ll((x0 + x1) / 2, y1)) };
+  };
+  const showSize = () => { const a = area(); frame.firstChild.textContent = `${Math.round(a.width_m)} m × ${Math.round(a.height_m)} m`; };
+  async function find() {
+    const text = q.value.trim();
+    if (text.length < 2) return;
+    found.replaceChildren(h("span", { class: "hint" }, "Searching..."));
+    try {
+      const rows = await get(`/api/geo/search?q=${encodeURIComponent(text)}`);
+      if (!rows.length) { found.replaceChildren(h("span", { class: "hint" }, "No place found. Try another spelling, or paste a Google Maps link.")); return; }
+      if (rows.length === 1) { m.setView([rows[0].lat, rows[0].lng], 18); found.replaceChildren(); return; }
+      found.replaceChildren(...rows.map((r) => h("button", { class: "small", type: "button", onclick: () => { m.setView([r.lat, r.lng], 17); found.replaceChildren(); } }, r.name.split(",").slice(0, 3).join(","))));
+    } catch (e) { found.replaceChildren(h("span", { class: "hint" }, e.message)); }
+  }
+  dialog({
+    title: "Use a real satellite map", wide: true, body,
+    actions: [
+      { label: "Cancel" },
+      { label: "Only save the position", run: async () => {
+        const a = area();
+        await put("/api/geo", { lat: a.lat, lng: a.lng });
+        toast("Position saved. CAMS now shows GPS positions on your own plan.");
+        await after();
+      } },
+      { label: "Use this area", class: "primary", run: async (d) => {
+        const a = area();
+        if (a.width_m > 20000 || a.height_m > 20000) { toast("That area is too big. Zoom in to your compound.", "error"); return true; }
+        if (a.width_m < 10) { toast("That area is too small. Zoom out a little.", "error"); return true; }
+        const btn = d.querySelector(".d-foot .primary");
+        btn.textContent = "Fetching the satellite picture...";
+        const r = await post("/api/geo/satellite", { ...a, keep_buildings: keep.checked });
+        toast(`Satellite map saved (${Math.round(a.width_m)} m × ${Math.round(a.height_m)} m${r.missing ? `, ${r.missing} pieces missing` : ""}). It now works without internet.`);
+        await after();
+      } },
+    ],
+    onClose: () => m?.remove(),
+  });
+  m = L.map(box, { zoomControl: true, attributionControl: true, maxZoom: 21, worldCopyJump: true, zoomSnap: 0.25, zoomDelta: 0.5, wheelPxPerZoomLevel: 90 });
+  m.attributionControl.setPrefix(false);
+  const sat = L.tileLayer("/api/geo/tiles/imagery/{z}/{x}/{y}", { maxNativeZoom: 19, maxZoom: 21, attribution: "Esri, Maxar, Earthstar Geographics" }).addTo(m);
+  const names = L.tileLayer("/api/geo/tiles/labels/{z}/{x}/{y}", { maxNativeZoom: 19, maxZoom: 21 });
+  if (labels.checked) names.addTo(m);
+  labels.onchange = () => (labels.checked ? names.addTo(m) : names.remove());
+  let ok = 0, bad = 0;
+  sat.on("tileload", () => { ok++; warn.classList.add("hidden"); });
+  sat.on("tileerror", () => { bad++; if (bad > 6 && ok === 0) warn.classList.remove("hidden"); });
+  m.on("move zoom resize", showSize);
+  setTimeout(() => {
+    m.invalidateSize();
+    if (data.geo) {
+      // zoom so the current campus fills the box
+      const fr = frame.getBoundingClientRect();
+      const mpp = Math.max(data.width_m / fr.width, data.height_m / fr.height);
+      const z = Math.log2((156543.03 * Math.cos((data.geo.lat * Math.PI) / 180)) / mpp);
+      m.setView(centre, Math.min(19, Math.max(3, z)));
+    } else m.setView(centre, 13);
+    showSize();
+  }, 60);
+  q.focus();
 }
 
 // ======================================================================= alerts
@@ -858,19 +1191,93 @@ async function settings(el) {
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "save_snapshots", checked: s.save_snapshots === "1", disabled: dis }), "Keep a small face picture with each sighting"),
     field("Delete sightings older than (days)", h("input", { name: "retention_days", type: "number", min: 1, max: 3650, value: s.retention_days, disabled: dis, style: { maxWidth: "160px" } }), "Keep only as long as you really need."),
   );
+  const video = h("div", { class: "stack" },
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "sighting_clips", checked: s.sighting_clips !== "0", disabled: dis }),
+      "Save a short video clip each time a person is seen (watch it on their route in Find a person)"),
+    h("div", { class: "grid3" },
+      field("Clip length (seconds)", h("input", { name: "clip_seconds", type: "number", min: 3, max: 30, value: s.clip_seconds, disabled: dis })),
+      field("Recording: pictures per second", h("input", { name: "record_fps", type: "number", min: 1, max: 25, value: s.record_fps, disabled: dis }), "8 is smooth enough for security video and saves space."),
+      field("Recording size", h("select", { name: "record_width", disabled: dis }, [["640", "Small (640 wide)"], ["960", "Medium (960)"], ["1280", "HD (1280)"], ["1920", "Full HD (1920)"]].map(([v, l]) => h("option", { value: v, selected: v === String(s.record_width) }, l))))),
+    h("div", { class: "grid3" },
+      field("Delete recordings older than (days)", h("input", { name: "recording_days", type: "number", min: 1, max: 365, value: s.recording_days, disabled: dis }), "Videos marked Keep are never deleted automatically."),
+      field("Space for recordings (GB)", h("input", { name: "recording_max_gb", type: "number", min: 1, max: 20000, value: s.recording_max_gb, disabled: dis }), "When full, the oldest videos are deleted first.")),
+  );
+  // ---- colour for black-and-white (night) video
+  const aiBox = h("div", { class: "stack" });
+  const modelIn = h("input", { type: "file", accept: ".onnx", class: "hidden" });
+  let aiTimer = null;
+  async function drawAi() {
+    const st = await get("/api/colour");
+    const d = st.download || {};
+    const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
+    aiBox.replaceChildren(...[
+      h("div", { class: "row" },
+        st.installed ? h("span", { class: "tag teal" }, `Colour AI installed (${st.size_mb} MB)`) : h("span", { class: "tag" }, "Colour AI not installed yet"),
+        st.installed && st.last_ms ? h("span", { class: "hint" }, `Last colouring took ${Math.round(st.last_ms)} ms`) : null,
+        st.active?.length ? h("span", { class: "hint" }, `${st.active.length} camera${st.active.length > 1 ? "s" : ""} in colour now`) : null),
+      d.running ? h("div", { class: "stack" }, h("progress", { max: 100, value: pct }), h("span", { class: "hint" }, d.total ? `Downloading ${pct}% of ${Math.round(d.total / 1e6)} MB...` : "Connecting...")) : null,
+      d.error ? h("p", { class: "error-text", style: { margin: 0 } }, d.error) : null,
+      st.error ? h("p", { class: "error-text", style: { margin: 0 } }, st.error) : null,
+      admin && !d.running ? h("div", { class: "row" },
+        h("button", { onclick: async () => { try { await post("/api/colour/download"); drawAi(); } catch (e) { fail(e); } } }, icon("download"), st.installed ? "Download again" : "Download the colour AI (about 130 MB, once)"),
+        h("button", { onclick: () => modelIn.click(), title: "If this PC has no internet, copy colorizer.onnx onto a USB stick on another PC" }, icon("upload"), "Load colorizer.onnx from this PC"),
+        st.installed ? h("button", { class: "small danger", onclick: async () => { await del("/api/colour/model"); drawAi(); } }, "Remove") : null) : null,
+    ].filter(Boolean));
+    clearTimeout(aiTimer);
+    if (d.running) aiTimer = setTimeout(() => drawAi().catch(() => {}), 1000);
+  }
+  modelIn.addEventListener("change", async () => {
+    const f = modelIn.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    aiBox.prepend(h("p", { class: "hint" }, "Checking the file..."));
+    try { await upload("/api/colour/model", fd); toast("Colour AI installed"); } catch (e) { fail(e); }
+    modelIn.value = ""; drawAi();
+  });
+  const colourOpts = h("div", { class: "stack" },
+    h("p", { class: "muted", style: { margin: 0 } }, "At night most CCTV cameras switch to infrared and show black and white. CAMS can colour that video live with an AI. ",
+      h("b", {}, "The colours are the AI's guess, not the real colours"), ": never rely on the colour of clothes or a car in AI-coloured video. Coloured pictures are marked \"AI colour\". Choose which cameras use it in each camera's settings (Cameras > Edit)."),
+    aiBox, modelIn,
+    h("div", { class: "grid3" },
+      h("label", { class: "check" }, h("input", { type: "checkbox", name: "colour_enhance", checked: s.colour_enhance !== "0", disabled: dis }), "Also make dark night pictures clearer"),
+      field("Colour AI speed", h("select", { name: "colour_refresh", disabled: dis },
+        [["0.3", "Fast (more work for the PC)"], ["0.6", "Normal"], ["1.5", "Light (slow PCs)"]].map(([v, l]) => h("option", { value: v, selected: v === String(s.colour_refresh) }, l))),
+        "How often the colours are worked out again for each camera being watched.")),
+  );
+  drawAi().catch(() => {});
   const saveRow = admin ? h("div", { class: "row end" }, h("button", { class: "primary", onclick: async () => {
-    const v = { ...formValues(rec), ...formValues(priv) };
-    v.blur_unknown = v.blur_unknown ? "1" : "0"; v.save_snapshots = v.save_snapshots ? "1" : "0";
+    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video), ...formValues(colourOpts) };
+    v.colour_enhance = v.colour_enhance ? "1" : "0";
+    v.blur_unknown = v.blur_unknown ? "1" : "0"; v.save_snapshots = v.save_snapshots ? "1" : "0"; v.sighting_clips = v.sighting_clips ? "1" : "0";
     try { await put("/api/settings", v); toast("Settings saved"); } catch (e) { fail(e); }
   } }, "Save settings")) : h("p", { class: "hint" }, "Only an admin can change these settings.");
 
   const section = (title, ...kids) => h("section", { class: "panel", style: { marginBottom: "16px" } }, h("div", { class: "panel-head" }, h("h2", {}, title)), h("div", { class: "panel-body stack" }, ...kids));
 
+  // ---- maps and mouse: every user can choose
+  const mouseOpt = (val, title, lines) => h("label", { class: `choice${prefs.mouse === val ? " on" : ""}` },
+    h("input", { type: "radio", name: "map_mouse", value: val, checked: prefs.mouse === val }),
+    h("div", {}, h("b", {}, title), h("ul", { class: "hint" }, lines.map((l) => h("li", {}, l)))));
+  const mouse = h("div", { class: "choices", role: "radiogroup", "aria-label": "Mouse buttons on maps" },
+    mouseOpt("standard", "Standard", ["Left button drag: move the plan; turn around a point in 3D", "Right button drag: look around in 3D"]),
+    mouseOpt("swapped", "Swapped (right button moves the map)", ["Right button drag: move the plan; turn around a point in 3D", "Left button drag: look around in 3D", "Clicking to choose and draw stays on the left button"]));
+  mouse.addEventListener("change", async (e) => {
+    const val = e.target.value;
+    try {
+      await put("/api/settings", { map_mouse: val });
+      setPrefs({ mouse: val });
+      mouse.querySelectorAll(".choice").forEach((c) => c.classList.toggle("on", c.querySelector("input").checked));
+      toast(val === "swapped" ? "Mouse buttons swapped: drag with the right button to move the map." : "Mouse buttons back to standard.");
+    } catch (ex) { fail(ex); }
+  });
+
   el.append(head("Settings", null),
+    section("Maps and mouse", h("p", { class: "muted", style: { margin: 0 } }, "Choose which mouse button moves the map (Overview, Find a person, Campus builder and 3D Map Studio). The middle button (wheel) always moves the map too."), mouse),
     section("Recognition", rec),
     section("Privacy", priv, admin ? h("div", { class: "row" }, h("button", { onclick: async () => {
       const r = await post("/api/maintenance/purge"); toast(`${r.deleted} old sightings deleted`);
     } }, "Delete old sightings now")) : null),
+    section("Video recordings and clips", video),
+    section("Colour for black-and-white (night) video", colourOpts),
     saveRow,
     h("div", { style: { height: "16px" } }),
   );
@@ -937,4 +1344,4 @@ async function guide(el) {
     h("div", { class: "panel-body" }, g.text.map((t) => h("p", {}, t)))))));
 }
 
-export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide, report, activity: activityPage };
+export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide, report, activity: activityPage, recordings };

@@ -30,6 +30,10 @@ from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
 from .face_engine import FaceEngine, Gallery, ModelsMissing, blur_region, crop_face, models_present
+from .colour import ColourFilter
+from .colour import draw_tag as draw_colour_tag
+from .geo import TileCache
+from .recorder import Recorder
 
 log = logging.getLogger("cams")
 
@@ -69,6 +73,10 @@ class CamsSystem:
         # activity AI: timelines of what each recognised person is doing
         self.behaviour = BehaviourEngine(self.db, paths, paths.models) if self.activity_ok else None
         self.insights = Insights(self)
+        # video: recordings, sighting clips and exports; satellite tiles for the map
+        self.recorder = Recorder(self)
+        self.tiles = TileCache(paths.tiles)
+        self.colour = ColourFilter(self)
 
     # ================================================================ lifecycle
     def start(self) -> None:
@@ -87,9 +95,16 @@ class CamsSystem:
         if self._start_cameras:
             for cam in self.db.query("SELECT * FROM cameras WHERE enabled = 1"):
                 self.start_camera(cam)
+            self.recorder.sync_continuous()
 
     def stop(self) -> None:
         self._stop.set()
+        self.colour.stop()
+        self.recorder.stop_all()
+        try:
+            self.recorder.flush_clips()
+        except Exception:
+            log.exception("Could not save the last clips")
         with self._cam_lock:
             for w in list(self.cameras.values()):
                 w.stop()
@@ -221,10 +236,22 @@ class CamsSystem:
             "status": s.status, "fps": s.fps, "error": s.error,
             "width": s.width, "height": s.height,
             "faces": len(s.overlays) if time.time() - s.overlays_at < 3 else 0,
+            "colour": self.colour.active(cam_id),
         }
 
     def _on_frame(self, worker: CameraWorker, frame: np.ndarray) -> None:
-        if not self.models_ok or self._stop.is_set():
+        if self._stop.is_set():
+            return
+        self._queue_analysis(worker, frame)
+        st = worker.state
+        try:
+            self.recorder.tap(worker.id, st.name, frame, st.overlays, time.time() - st.overlays_at < 2.5,
+                              colour=lambda img, want: self.colour.apply(worker.id, img, tag=True, want=want)[0])
+        except Exception:
+            log.exception("Clip buffer failed on camera %s", worker.id)
+
+    def _queue_analysis(self, worker: CameraWorker, frame: np.ndarray) -> None:
+        if not self.models_ok:
             return
         fps = max(0.2, self.fsetting("analysis_fps", 2))
         now = time.time()
@@ -347,6 +374,10 @@ class CamsSystem:
                 (face.person_id, cam_id, worker.state.name, ts, ts, face.similarity, snap),
             )
             self._active[key] = {"id": sid, "last_seen": ts, "hits": 1, "confidence": face.similarity}
+            try:
+                self.recorder.request_clip(cam_id, worker.state.name, sid, ts)
+            except Exception:
+                log.exception("Could not start a sighting clip")
             if len(self._active) > 5000:
                 cutoff = ts - merge
                 self._active = {k: v for k, v in self._active.items() if v["last_seen"] >= cutoff}
@@ -396,6 +427,16 @@ class CamsSystem:
         return f"{day}/{name}"
 
     # ================================================================ live view
+    def compose_frame(self, cam_id: int, *, max_width: int = 1280, annotate: bool = False):
+        """Newest picture of a camera as shown to people (strangers blurred), and its time."""
+        w = self.cameras.get(cam_id)
+        if not w or w.state.status != "online":
+            return None
+        frame = w.latest()
+        if frame is None:
+            return None
+        return self._dress(w, frame, max_width, annotate), w.state.last_frame_at
+
     def render_frame(self, cam_id: int, *, max_width: int = 1280, annotate: bool = True) -> bytes | None:
         w = self.cameras.get(cam_id)
         if not w:
@@ -403,15 +444,30 @@ class CamsSystem:
         frame = w.latest()
         if frame is None:
             return None
+        frame = self._dress(w, frame, max_width, annotate)
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        return buf.tobytes() if ok else None
+
+    def _dress(self, w: CameraWorker, frame: np.ndarray, max_width: int, annotate: bool) -> np.ndarray:
+        """The picture people see: smaller, coloured if it is black and white (when asked),
+        strangers blurred, name boxes."""
         st = w.state
+        h, wd = frame.shape[:2]
+        k = 1.0
+        if wd > max_width:
+            k = max_width / wd
+            frame = cv2.resize(frame, (max_width, int(h * k)), interpolation=cv2.INTER_AREA)
+        frame, coloured = self.colour.apply(w.id, frame)
+        sc = (lambda b: tuple(int(round(v * k)) for v in b)) if k != 1.0 else (lambda b: tuple(int(v) for v in b))
         fresh = time.time() - st.overlays_at < 2.5
         if fresh and annotate:
-            for (px, py, pw, ph) in getattr(st, "people", []):
+            for p in getattr(st, "people", []):
+                px, py, pw, ph = sc(p[:4])
                 cv2.rectangle(frame, (px, py), (px + pw, py + ph), (200, 200, 200), 1)
         if fresh:
             blur = self.setting("blur_unknown") == "1"
             for o in st.overlays:
-                x, y, bw, bh = o["box"]
+                x, y, bw, bh = sc(o["box"])
                 if o["person_id"] is None:
                     if blur:
                         blur_region(frame, (x, y, bw, bh))
@@ -426,11 +482,9 @@ class CamsSystem:
                     (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
                     cv2.rectangle(frame, (x, max(0, y - th - 8)), (x + tw + 8, y), color, -1)
                     cv2.putText(frame, label, (x + 4, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-        h, wd = frame.shape[:2]
-        if wd > max_width:
-            frame = cv2.resize(frame, (max_width, int(h * max_width / wd)))
-        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        return buf.tobytes() if ok else None
+        if coloured:
+            draw_colour_tag(frame)
+        return frame
 
     # ================================================================ maintenance
     def purge_old(self) -> int:
@@ -453,6 +507,10 @@ class CamsSystem:
         self.db.execute("DELETE FROM activity_examples WHERE ts < ? AND label IS NULL", (cutoff,))
         self.db.execute("DELETE FROM person_notes WHERE ts < ?", (cutoff,))
         self.db.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
+        try:
+            self.recorder.purge()
+        except Exception:
+            log.exception("Recording clean-up failed")
         # remove empty day folders
         for d in self.paths.snapshots.glob("*"):
             if d.is_dir() and not any(d.iterdir()):

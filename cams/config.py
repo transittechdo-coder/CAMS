@@ -70,8 +70,25 @@ class Paths:
     def logs(self) -> Path:
         return self.data / "logs"
 
+    @property
+    def recordings(self) -> Path:
+        return self.data / "recordings"
+
+    @property
+    def tiles(self) -> Path:
+        return self.data / "tiles"
+
+    @property
+    def user_models(self) -> Path:
+        """AI models added after installing (the colour AI), kept across updates."""
+        return self.data / "models"
+
+    @property
+    def exports(self) -> Path:
+        return self.data / "exports"
+
     def ensure(self) -> None:
-        for p in (self.data, self.snapshots, self.enrollments, self.maps, self.logs):
+        for p in (self.data, self.snapshots, self.enrollments, self.maps, self.logs, self.recordings):
             p.mkdir(parents=True, exist_ok=True)
 
 
@@ -104,6 +121,24 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "daily_summary_time": "20:30",
     "onboarding_done": "0",
     "map_mode": "2d",
+    # Mouse on the maps: "standard" (left drag moves the plan / turns around a point,
+    # right drag looks around) or "swapped" (the two buttons change places).
+    "map_mouse": "standard",
+    # Where the campus is on Earth: latitude / longitude of the map centre ("" = not set).
+    "geo_lat": "",
+    "geo_lng": "",
+    # Save a short video clip of each sighting (shown on the person's route).
+    "sighting_clips": "1",
+    "clip_seconds": "8",
+    # Camera recordings: pictures per second, largest width, days kept, disk limit.
+    "record_fps": "8",
+    "record_width": "1280",
+    "recording_days": "7",
+    "recording_max_gb": "50",
+    # Colour for black-and-white (night / infrared) video: clear up dark pictures,
+    # and how often (seconds) the colour AI refreshes each watched camera.
+    "colour_enhance": "1",
+    "colour_refresh": "0.6",
 }
 
 SFACE_RECOMMENDED_THRESHOLD = 0.363
