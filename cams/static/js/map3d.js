@@ -119,18 +119,20 @@ export class Campus3D {
     for (const b of data.buildings) {
       if (b.polygon.length < 3) continue;
       const shape = new THREE.Shape(b.polygon.map(([x, y]) => new THREE.Vector2(x, -y)));
-      const flat = b.kind !== "building" || this._hasWorld;
+      // a building already drawn in Map Studio is shown by that drawing; the others stand up as boxes
+      const drawn = this._hasWorld && this._covers(b.polygon);
+      const flat = b.kind !== "building" || drawn;
       const height = flat ? 0.15 : Math.max(1, b.height_m || 6);
       const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: this._hasWorld ? 0.22 : flat ? 0.45 : 0.82, depthWrite: !this._hasWorld });
+      const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(b.color), transparent: true, opacity: drawn ? 0.22 : flat ? 0.45 : 0.82, depthWrite: !drawn });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.userData.holoFaint = flat;          // zones, fields, gates: faint in the hologram
       this.groups.buildings.add(mesh);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: edgeColor }));
       this.groups.buildings.add(edges);
       // floor lines
-      if (this._hasWorld) { this.groups.buildings.add(this._label(b.name, ...centerOf(b.polygon), 2)); continue; }
+      if (drawn) { this.groups.buildings.add(this._label(b.name, ...centerOf(b.polygon), 2)); continue; }
       if (!flat && b.floors > 1) {
         for (let f = 1; f < b.floors; f++) {
           const y = (height / b.floors) * f;
@@ -181,6 +183,8 @@ export class Campus3D {
     for (const c of [...this.groups.world.children]) { this.groups.world.remove(c); disposeGroup(c); }
     const w = buildWorld(this._scene);
     this._hasWorld = w.children.length > 0;
+    // where the Map Studio shapes stand (ground position of each), to know which buildings it covers
+    this._worldPts = w.children.map((c) => { const bb = new THREE.Box3().setFromObject(c); const m = bb.getCenter(new THREE.Vector3()); return [m.x, m.z]; });
     for (const c of [...w.children]) this.groups.world.add(c);
     this._paintImg = null;
     if (this._scene?.paint) { const im = new Image(); im.onload = () => { this._paintImg = im; this._paintGround(); }; im.src = this._scene.paint; }
@@ -206,6 +210,10 @@ export class Campus3D {
   }
 
   setStyle(style) { this.holo.set(style === "hologram"); }
+
+  _covers(poly) {
+    return (this._worldPts || []).some(([x, z]) => inside(x, z, poly));
+  }
 
   setMarks({ pins = [], trail = [] } = {}) {
     this._clear(this.groups.marks);
@@ -263,4 +271,13 @@ function centerOf(poly) {
 
 function rendererName(r) {
   try { const gl = r.getContext(), e = gl.getExtension("WEBGL_debug_renderer_info"); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : ""; } catch { return ""; }
+}
+
+function inside(x, y, poly) {
+  let c = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi) c = !c;
+  }
+  return c;
 }

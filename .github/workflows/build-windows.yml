@@ -17,6 +17,7 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -71,6 +72,7 @@ jobs:
 
       - name: Install on a clean PC and check it is ready to use
         shell: pwsh
+        timeout-minutes: 10
         run: |
           $ErrorActionPreference = "Stop"
           function Fail($msg) {
@@ -118,14 +120,21 @@ jobs:
             Write-Host "Opened from the desktop icon: face, object and body-pose AI loaded, first-run setup screen ready."
 
             # Check the CAMS window itself shows the screens
-            $p = Start-Process -FilePath $exe -ArgumentList "--check-window" -Wait -PassThru
+            $p = Start-Process -FilePath $exe -ArgumentList "--check-window" -PassThru
+            if (-not $p.WaitForExit(150000)) {
+              Write-Host "::warning title=Window check::CAMS --check-window did not exit within 150 s; stopping it"
+              Get-Process CAMS -ErrorAction SilentlyContinue | Stop-Process -Force
+            }
+            Start-Sleep -Seconds 2
             $wc = Get-Content (Join-Path $env:APPDATA "CAMS\window_check.json") -ErrorAction SilentlyContinue | ConvertFrom-Json
             Write-Host "Window check: ok=$($wc.ok) mode=$($wc.mode)"
             if (-not $wc.ok) { Fail "The CAMS window did not show its screens (mode: $($wc.mode))" }
             "### CAMS install check`n- Installed without admin rights to ``$app```n- Desktop icon and Start menu entry present`n- Started from the desktop icon with AI models loaded`n- Window mode: **$($wc.mode)**" | Out-File $env:GITHUB_STEP_SUMMARY -Append
 
             # Uninstall and check it cleans up
-            Start-Process -FilePath (Join-Path $app "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+            Get-Process CAMS, msedgewebview2 -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$app*" -or $_.ProcessName -eq "CAMS" } | Stop-Process -Force -ErrorAction SilentlyContinue
+            $u = Start-Process -FilePath (Join-Path $app "unins000.exe") -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru
+            if (-not $u.WaitForExit(120000)) { Fail "Uninstall did not finish within 2 minutes" }
             for ($i = 0; $i -lt 30 -and (Test-Path $exe); $i++) { Start-Sleep -Seconds 1 }
             if (Test-Path $exe) { Fail "Uninstall did not remove CAMS.exe" }
             if (Test-Path $lnk) { Fail "Uninstall left the desktop icon behind" }
@@ -176,6 +185,7 @@ jobs:
   # CAMS got installed, has a desktop icon and is open at the end.
   build-bat:
     runs-on: windows-latest
+    timeout-minutes: 30
     if: github.event_name != 'release'
     steps:
       - uses: actions/checkout@v4

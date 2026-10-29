@@ -314,6 +314,14 @@ def _main(argv: list[str] | None = None) -> int:
     ready = None
     result = {"ok": False}
     if args.check_window:
+        def write_check(mode: str) -> None:
+            out = {"ok": result["ok"], "mode": mode, "version": __version__}
+            try:
+                (paths.data / "window_check.json").write_text(json.dumps(out))
+            except OSError:
+                pass
+            print(json.dumps(out), flush=True)
+
         def ready(close):
             def watch():
                 end = time.time() + 60
@@ -321,7 +329,12 @@ def _main(argv: list[str] | None = None) -> int:
                     time.sleep(0.3)
                 result["ok"] = system.stats.get("ui_loads", 0) >= 1
                 time.sleep(1)
-                close()
+                # write the answer first: if closing the window hangs, the check still has its result
+                write_check(result.get("mode", "webview"))
+                threading.Thread(target=close, daemon=True).start()
+                time.sleep(20)
+                log.warning("The window did not close by itself; ending the window check")
+                os._exit(0 if result["ok"] else 1)
             threading.Thread(target=watch, daemon=True).start()
 
     try:
@@ -342,10 +355,9 @@ def _main(argv: list[str] | None = None) -> int:
         except OSError:
             pass
     if args.check_window:
-        out = {"ok": result["ok"], "mode": mode, "version": __version__}
-        (paths.data / "window_check.json").write_text(json.dumps(out))
-        print(json.dumps(out))
-        return 0 if result["ok"] else 1
+        result["mode"] = mode
+        write_check(mode)
+        os._exit(0 if result["ok"] else 1)     # do not wait for window threads that never end
     return 0
 
 
