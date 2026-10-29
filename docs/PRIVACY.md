@@ -19,6 +19,9 @@ lawfully. This page lists what CAMS does to help, and what you must do.
 - **Deletes old records** automatically after the number of days set in Settings (30 by default).
   Camera recordings are deleted after their own number of days (7 by default) or when their disk
   space is full, unless someone marked a video **Keep**. Sighting clips follow the sightings.
+- **AI colour** on black-and-white night video is a guess made by an AI. Pictures coloured this
+  way are marked "AI colour"; do not use the colour of clothes or vehicles in them as evidence.
+  The colour AI runs on the CAMS PC; downloading it once is the only internet use.
 - **Recordings and clips** blur strangers the same way as the live view. Every play, download and
   export of a recording is written in the activity log.
 - **Erases a person completely** (Delete person and data): face prints, pictures, all sightings

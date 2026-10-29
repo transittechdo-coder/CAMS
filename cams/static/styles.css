@@ -6,7 +6,7 @@
   --sheet: #f8faf9;
   --ink: #0e1d2d;
   --ink-2: #4a6177;
-  --ink-3: #7d90a1;
+  --ink-3: #5c6f80;
   --line: #c9d4d6;
   --line-2: #dfe6e7;
   --teal: #0b7a75;
@@ -94,6 +94,8 @@ button, .btn {
 button:hover, .btn:hover { border-color: var(--ink-3); }
 button.primary { background: var(--teal); border-color: var(--teal); color: #fff; font-weight: 600; }
 button.primary:hover { filter: brightness(1.08); }
+:root[data-theme="dark"] button.primary { color: #06201e; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #06201e; } }
 button.danger { color: var(--red); }
 button.danger.solid { background: var(--red); color: #fff; border-color: var(--red); }
 button.ghost { border-color: transparent; background: none; }
@@ -208,6 +210,10 @@ table.list tr.clickable:hover td { background: var(--paper); }
 .tag.amber { background: var(--amber-soft); color: #8a5a00; }
 :root[data-theme="dark"] .tag.amber { color: var(--amber); }
 .tag.red { background: var(--red-soft); color: var(--red); }
+.tag.violet { background: #efe3f7; color: #6b2f8f; }
+:root[data-theme="dark"] .tag.violet { background: #34203f; color: #d9b3f0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tag.violet { background: #34203f; color: #d9b3f0; } }
+progress { width: 100%; height: 10px; accent-color: var(--teal); }
 .badge { background: var(--red); color: #fff; font: 600 11px var(--display); padding: 1px 7px; border-radius: 99px; }
 .angles { display: inline-flex; gap: 3px; }
 .angles i { width: 9px; height: 9px; border-radius: 2px; background: var(--line); display: inline-block; }
@@ -286,14 +292,21 @@ dialog .d-foot { padding: 12px 20px 16px; display: flex; justify-content: flex-e
 
 /* ------------------------------------------------------------ setup screens */
 .gate { min-height: 100vh; display: grid; grid-template-columns: 1fr 1fr; }
-.gate-art { background: var(--ink); color: #e3ecef; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 40px; }
+.gate-art { background: #0e1d2d; color: #e3ecef; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; padding: 40px; }
 .gate-art svg.plan { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.9; }
+.gate-art::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46%; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(14, 29, 45, 0), rgba(14, 29, 45, .92) 45%, #0e1d2d); }
+.gate-logo, .gate-art p { z-index: 1; }
 .gate-logo { position: relative; display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
 .gate-mark { width: 76px; height: 76px; color: #e3ecef; flex: none; }
-.gate-logo small { color: #a9bcc6; font-size: 13px; letter-spacing: 0.02em; }
+.gate-logo small { color: #cfdbe1; font-size: 13px; letter-spacing: 0.02em; }
 .gate-art h1 { font-size: 44px; letter-spacing: 0.06em; position: relative; }
-.gate-art p { position: relative; color: #a9bcc6; max-width: 40ch; }
-.gate-form { display: grid; place-content: center; padding: 40px; }
+.gate-art p { position: relative; color: #d6e1e6; font-size: 15px; max-width: 40ch; }
+.gate-form { display: grid; place-content: center; padding: 40px; background: var(--paper); color: var(--ink); }
+.gate-form h2 { font-size: 24px; }
+.gate-form .field > span { color: var(--ink); }
+.gate-form .hint { color: var(--ink-2); font-size: 13px; }
+.gate-form .muted { color: var(--ink-2); }
 .gate-form form { width: min(380px, 80vw); display: grid; gap: 14px; }
 .steps-bar { display: flex; gap: 6px; }
 .steps-bar i { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }

@@ -304,6 +304,8 @@ class Database:
             "analytics": "TEXT NOT NULL DEFAULT '{}'",
             # off | always (record all the time)
             "record_mode": "TEXT NOT NULL DEFAULT 'off'",
+            # colour for black-and-white video: off | auto (only when the picture is black and white) | always
+            "colour_mode": "TEXT NOT NULL DEFAULT 'off'",
         },
         "sightings": {
             "clip_id": "INTEGER",          # recordings.id of the short clip of this sighting

@@ -275,7 +275,8 @@ class Recorder:
             t.cut()
 
     # ------------------------------------------------------------ clips
-    def tap(self, cam_id: int, cam_name: str, frame: np.ndarray, overlays: list, overlays_fresh: bool) -> None:
+    def tap(self, cam_id: int, cam_name: str, frame: np.ndarray, overlays: list, overlays_fresh: bool,
+            colour=None) -> None:
         """Called by the camera thread for every picture. Keeps a few seconds of small pictures."""
         if self.sys.setting("sighting_clips") == "0":
             return
@@ -293,6 +294,9 @@ class Recorder:
                 if o.get("person_id") is None:
                     x, y, bw, bh = o["box"]
                     blur_region(small, (int(x * k), int(y * k), max(1, int(bw * k)), max(1, int(bh * k))))
+        if colour is not None:
+            # the colour AI only works for this camera while a clip is being made (or someone watches)
+            small = colour(small, bool(self._jobs.get(cam_id)))
         ring = self._ring.get(cam_id)
         if ring is None:
             ring = self._ring[cam_id] = deque(maxlen=int(CLIP_BEFORE_S * CLIP_FPS) + 1)

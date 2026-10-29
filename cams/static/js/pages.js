@@ -112,6 +112,7 @@ async function live(el) {
     const meta = h("span", { class: "num" }, "");
     const off = h("div", { class: "cam-off hidden" });
     const recBadge = h("span", { class: "rec-badge hidden" }, icon("rec"), h("span", { class: "num" }, "REC"));
+    const colourTag = h("span", { class: "tag violet hidden", title: "This black-and-white camera is coloured by the AI. The colours are a guess." }, "AI colour");
     const recBtn = can("operator") ? h("button", { class: "small rec-btn", title: "Record this camera", onclick: async (e) => {
       e.stopPropagation();
       const on = recBtn.dataset.on === "1";
@@ -123,14 +124,15 @@ async function live(el) {
       } catch (ex) { fail(ex); }
       recBtn.disabled = false;
     } }, icon("rec"), "Record") : null;
-    caps.set(c.id, { dot, meta, off, img, recBadge, recBtn });
+    caps.set(c.id, { dot, meta, off, img, recBadge, recBtn, colourTag });
     grid.append(h("div", { class: "cam-tile", ondblclick: () => img.requestFullscreen?.() }, img, off, recBadge,
-      h("div", { class: "cam-cap" }, dot, h("b", {}, c.name), meta, recBtn)));
+      h("div", { class: "cam-cap" }, dot, h("b", {}, c.name), colourTag, meta, recBtn)));
   }
   async function refresh() {
     for (const c of await get("/api/cameras")) {
       const t = caps.get(c.id);
       if (!t) continue;
+      t.colourTag.classList.toggle("hidden", !c.live.colour);
       const rec = c.recording || {};
       const since = rec.manual || rec.continuous;
       t.recBadge.classList.toggle("hidden", !since);
@@ -518,13 +520,18 @@ function cameraDialog(cam, after) {
       "Restricted area: alert me when someone who is not enrolled appears"),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "record_always", checked: cam.record_mode === "always" }),
       "Record this camera all the time (kept for the days set in Settings, then deleted)"),
+    field("Colour for black-and-white video", h("select", { name: "colour_mode" },
+      [["off", "Off: show the picture as the camera sends it"],
+       ["auto", "Automatic: colour it when the camera turns black and white (night / infrared)"],
+       ["always", "Always colour this camera (an old black-and-white camera)"]].map(([v, l]) => h("option", { value: v, selected: (cam.colour_mode || "off") === v }, l))),
+      "The colour AI guesses the colours. Never trust the colour of clothes or cars in AI-coloured video. Set it up in Settings > Video."),
   );
   dialog({
     title: isNew ? "Add a camera" : `Edit ${cam.name}`, body,
     actions: [{ label: "Cancel" }, { label: isNew ? "Add camera" : "Save", class: "primary", run: async () => {
       const v = formValues(body);
       const payload = { ...cam, name: v.name, source: v.source, enabled: v.enabled, restricted: v.restricted, kind: null,
-        record_mode: v.record_always ? "always" : "off" };
+        record_mode: v.record_always ? "always" : "off", colour_mode: v.colour_mode };
       delete payload.live; delete payload.source_display; delete payload.recording;
       if (isNew) await post("/api/cameras", payload); else await put(`/api/cameras/${cam.id}`, payload);
       toast(isNew ? "Camera added. Place it on the map in the Campus builder." : "Camera saved");
@@ -604,6 +611,7 @@ async function cameras(el) {
       h("td", {}, h("span", { class: "row" }, h("span", { class: `dot ${c.enabled ? c.live.status : ""}` }), c.enabled ? c.live.status : "off")),
       h("td", {}, h("b", {}, c.name), c.restricted ? h("span", { class: "tag red", style: { marginLeft: "6px" } }, "Restricted") : null,
         c.record_mode === "always" ? h("span", { class: "tag", style: { marginLeft: "6px" } }, "Recording all the time") : null,
+        c.colour_mode && c.colour_mode !== "off" ? h("span", { class: "tag violet", style: { marginLeft: "6px" } }, c.colour_mode === "auto" ? "AI colour at night" : "AI colour") : null,
         h("div", { class: "row", style: { gap: "4px", marginTop: "2px" } }, ruleTags(c.analytics).map((t) => h("span", { class: "tag" }, t))),
         c.live.status === "offline" ? h("div", { class: "hint" }, c.live.error) : null),
       h("td", { class: "muted", style: { maxWidth: "320px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.source_display),
@@ -1187,8 +1195,51 @@ async function settings(el) {
       field("Delete recordings older than (days)", h("input", { name: "recording_days", type: "number", min: 1, max: 365, value: s.recording_days, disabled: dis }), "Videos marked Keep are never deleted automatically."),
       field("Space for recordings (GB)", h("input", { name: "recording_max_gb", type: "number", min: 1, max: 20000, value: s.recording_max_gb, disabled: dis }), "When full, the oldest videos are deleted first.")),
   );
+  // ---- colour for black-and-white (night) video
+  const aiBox = h("div", { class: "stack" });
+  const modelIn = h("input", { type: "file", accept: ".onnx", class: "hidden" });
+  let aiTimer = null;
+  async function drawAi() {
+    const st = await get("/api/colour");
+    const d = st.download || {};
+    const pct = d.total ? Math.round((d.done / d.total) * 100) : 0;
+    aiBox.replaceChildren(...[
+      h("div", { class: "row" },
+        st.installed ? h("span", { class: "tag teal" }, `Colour AI installed (${st.size_mb} MB)`) : h("span", { class: "tag" }, "Colour AI not installed yet"),
+        st.installed && st.last_ms ? h("span", { class: "hint" }, `Last colouring took ${Math.round(st.last_ms)} ms`) : null,
+        st.active?.length ? h("span", { class: "hint" }, `${st.active.length} camera${st.active.length > 1 ? "s" : ""} in colour now`) : null),
+      d.running ? h("div", { class: "stack" }, h("progress", { max: 100, value: pct }), h("span", { class: "hint" }, d.total ? `Downloading ${pct}% of ${Math.round(d.total / 1e6)} MB...` : "Connecting...")) : null,
+      d.error ? h("p", { class: "error-text", style: { margin: 0 } }, d.error) : null,
+      st.error ? h("p", { class: "error-text", style: { margin: 0 } }, st.error) : null,
+      admin && !d.running ? h("div", { class: "row" },
+        h("button", { onclick: async () => { try { await post("/api/colour/download"); drawAi(); } catch (e) { fail(e); } } }, icon("download"), st.installed ? "Download again" : "Download the colour AI (about 130 MB, once)"),
+        h("button", { onclick: () => modelIn.click(), title: "If this PC has no internet, copy colorizer.onnx onto a USB stick on another PC" }, icon("upload"), "Load colorizer.onnx from this PC"),
+        st.installed ? h("button", { class: "small danger", onclick: async () => { await del("/api/colour/model"); drawAi(); } }, "Remove") : null) : null,
+    ].filter(Boolean));
+    clearTimeout(aiTimer);
+    if (d.running) aiTimer = setTimeout(() => drawAi().catch(() => {}), 1000);
+  }
+  modelIn.addEventListener("change", async () => {
+    const f = modelIn.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    aiBox.prepend(h("p", { class: "hint" }, "Checking the file..."));
+    try { await upload("/api/colour/model", fd); toast("Colour AI installed"); } catch (e) { fail(e); }
+    modelIn.value = ""; drawAi();
+  });
+  const colourOpts = h("div", { class: "stack" },
+    h("p", { class: "muted", style: { margin: 0 } }, "At night most CCTV cameras switch to infrared and show black and white. CAMS can colour that video live with an AI. ",
+      h("b", {}, "The colours are the AI's guess, not the real colours"), ": never rely on the colour of clothes or a car in AI-coloured video. Coloured pictures are marked \"AI colour\". Choose which cameras use it in each camera's settings (Cameras > Edit)."),
+    aiBox, modelIn,
+    h("div", { class: "grid3" },
+      h("label", { class: "check" }, h("input", { type: "checkbox", name: "colour_enhance", checked: s.colour_enhance !== "0", disabled: dis }), "Also make dark night pictures clearer"),
+      field("Colour AI speed", h("select", { name: "colour_refresh", disabled: dis },
+        [["0.3", "Fast (more work for the PC)"], ["0.6", "Normal"], ["1.5", "Light (slow PCs)"]].map(([v, l]) => h("option", { value: v, selected: v === String(s.colour_refresh) }, l))),
+        "How often the colours are worked out again for each camera being watched.")),
+  );
+  drawAi().catch(() => {});
   const saveRow = admin ? h("div", { class: "row end" }, h("button", { class: "primary", onclick: async () => {
-    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video) };
+    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video), ...formValues(colourOpts) };
+    v.colour_enhance = v.colour_enhance ? "1" : "0";
     v.blur_unknown = v.blur_unknown ? "1" : "0"; v.save_snapshots = v.save_snapshots ? "1" : "0"; v.sighting_clips = v.sighting_clips ? "1" : "0";
     try { await put("/api/settings", v); toast("Settings saved"); } catch (e) { fail(e); }
   } }, "Save settings")) : h("p", { class: "hint" }, "Only an admin can change these settings.");
@@ -1219,6 +1270,7 @@ async function settings(el) {
       const r = await post("/api/maintenance/purge"); toast(`${r.deleted} old sightings deleted`);
     } }, "Delete old sightings now")) : null),
     section("Video recordings and clips", video),
+    section("Colour for black-and-white (night) video", colourOpts),
     saveRow,
     h("div", { style: { height: "16px" } }),
   );

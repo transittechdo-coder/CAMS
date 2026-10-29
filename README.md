@@ -56,6 +56,7 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
 | **Real satellite map** | Find your compound on a world satellite map and use it as the campus map (internet needed once, then offline). Every camera and sighting gets an exact GPS position you can copy into Google Maps. |
 | **Routes with video** | A person's movements are drawn as a line from building to building with direction arrows and numbered stops, each with a small picture and a short video clip of the moment they were seen. |
 | **Recording** | Record any camera with one button, or all the time. Play recordings inside CAMS, download them as .mp4, or download just a part (camera + time from / to). Old videos delete themselves. |
+| **Colour at night** | Black-and-white (infrared) CCTV video is coloured live by an on-device AI, per camera: automatic at night or always. Dark pictures are made clearer. Coloured video is marked *AI colour*, because the colours are a guess. |
 | **Your mouse** | Choose which mouse button moves the map: swap left and right in Settings. |
 | **Restricted areas** | Per building or zone: only some people may enter (by type, class or name), or some may not, and closed hours. |
 | **Unusual situations** | A person-detection AI flags loitering, crowds, running, people present during closed hours, and cameras that are covered, blurred or turned away. |

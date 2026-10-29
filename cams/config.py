@@ -79,6 +79,11 @@ class Paths:
         return self.data / "tiles"
 
     @property
+    def user_models(self) -> Path:
+        """AI models added after installing (the colour AI), kept across updates."""
+        return self.data / "models"
+
+    @property
     def exports(self) -> Path:
         return self.data / "exports"
 
@@ -130,6 +135,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "record_width": "1280",
     "recording_days": "7",
     "recording_max_gb": "50",
+    # Colour for black-and-white (night / infrared) video: clear up dark pictures,
+    # and how often (seconds) the colour AI refreshes each watched camera.
+    "colour_enhance": "1",
+    "colour_refresh": "0.6",
 }
 
 SFACE_RECOMMENDED_THRESHOLD = 0.363

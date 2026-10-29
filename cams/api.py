@@ -37,6 +37,7 @@ from .face_engine import ALL_ANGLES, ANGLES, REFERENCE_ANGLES, ModelsMissing
 from .system import CamsSystem, snapshot_file
 from . import geo
 from .recorder import clear_tmp
+from .colour import MODES as COLOUR_MODES, MODEL_NAME as COLOUR_MODEL
 from starlette.background import BackgroundTask
 
 COOKIE = "cams_session"
@@ -95,6 +96,7 @@ class CameraIn(BaseModel):
     fov: float = 90
     analytics: dict | None = None
     record_mode: str = "off"
+    colour_mode: str = "off"
 
 
 class CameraPlaceIn(BaseModel):
@@ -823,17 +825,20 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             raise HTTPException(400, "Unknown camera type.")
         if body.record_mode not in ("off", "always"):
             raise HTTPException(400, "Recording must be off or always.")
+        if body.colour_mode not in COLOUR_MODES:
+            raise HTTPException(400, "Colour must be off, auto or always.")
         return (body.name.strip(), body.source.strip(), kind, int(body.enabled), int(body.restricted),
                 body.building_id, body.floor, body.map_x, body.map_y, body.direction % 360, body.fov, analytics,
-                body.record_mode)
+                body.record_mode, body.colour_mode)
 
     @app.post("/api/cameras")
     def add_camera(body: CameraIn, user=operator):
         cid = db.execute(
             "INSERT INTO cameras(name, source, kind, enabled, restricted, building_id, floor, map_x, map_y, direction, "
-            "fov, analytics, record_mode, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "fov, analytics, record_mode, colour_mode, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             _cam_values(body) + (time.time(),),
         )
+        sysm.colour.refresh_modes()
         sysm.refresh_areas()
         sysm.restart_camera(cid)
         sysm.recorder.sync_continuous()
@@ -851,9 +856,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             values = (values[0], old["source"]) + values[2:]
         db.execute(
             "UPDATE cameras SET name=?, source=?, kind=?, enabled=?, restricted=?, building_id=?, floor=?, map_x=?, "
-            "map_y=?, direction=?, fov=?, analytics=?, record_mode=? WHERE id=?",
+            "map_y=?, direction=?, fov=?, analytics=?, record_mode=?, colour_mode=? WHERE id=?",
             values + (cid,),
         )
+        sysm.colour.refresh_modes()
         sysm.refresh_areas()
         sysm.restart_camera(cid)
         sysm.recorder.sync_continuous()
@@ -935,6 +941,44 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 time.sleep(delay)
 
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    # ------------------------------------------------------------ colour for black-and-white video
+    @app.get("/api/colour")
+    def colour_status(user=viewer):
+        return sysm.colour.status()
+
+    @app.post("/api/colour/download")
+    def colour_download(user=admin):
+        sysm.colour.start_download()
+        db.audit(user["username"], "colour_ai_download")
+        return sysm.colour.status()
+
+    @app.post("/api/colour/model")
+    async def colour_upload(file: UploadFile = File(...), user=admin):
+        sysm.paths.user_models.mkdir(parents=True, exist_ok=True)
+        tmp = sysm.paths.user_models / (COLOUR_MODEL + ".upload")
+        size = 0
+        with open(tmp, "wb") as f:
+            while chunk := await file.read(1 << 20):
+                size += len(chunk)
+                if size > 600 * 1024 * 1024:
+                    f.close()
+                    tmp.unlink(missing_ok=True)
+                    raise HTTPException(413, "That file is too large to be the colour AI.")
+                f.write(chunk)
+        try:
+            sysm.colour.install(tmp)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        db.audit(user["username"], "colour_ai_install", {"bytes": size})
+        return sysm.colour.status()
+
+    @app.delete("/api/colour/model")
+    def colour_remove(user=admin):
+        sysm.colour.model_path.unlink(missing_ok=True)
+        sysm.colour.load()
+        db.audit(user["username"], "colour_ai_remove")
+        return sysm.colour.status()
 
     # ------------------------------------------------------------ recordings and clips
     def _rec_or_404(rid: int) -> dict:
@@ -1326,7 +1370,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     EDITABLE = {"site_name", "match_threshold", "analysis_fps", "sighting_merge_seconds", "retention_days",
                 "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
                 "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
-                "recording_max_gb"}
+                "recording_max_gb", "colour_enhance", "colour_refresh"}
     PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
     @app.get("/api/settings")
@@ -1360,6 +1404,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Record 1 to 25 pictures a second.")
             if "record_width" in values and int(values["record_width"]) not in (640, 960, 1280, 1920):
                 raise HTTPException(400, "Recording size must be 640, 960, 1280 or 1920 wide.")
+            if "colour_enhance" in values and str(values["colour_enhance"]) not in ("0", "1"):
+                raise HTTPException(400, "Clearer night pictures must be on or off.")
+            if "colour_refresh" in values and not 0.15 <= float(values["colour_refresh"]) <= 10:
+                raise HTTPException(400, "Colour refresh must be 0.15 to 10 seconds.")
             if "recording_days" in values and not 1 <= int(values["recording_days"]) <= 365:
                 raise HTTPException(400, "Keep recordings for 1 to 365 days.")
             if "recording_max_gb" in values and not 1 <= float(values["recording_max_gb"]) <= 20000:

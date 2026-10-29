@@ -30,6 +30,8 @@ from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
 from .face_engine import FaceEngine, Gallery, ModelsMissing, blur_region, crop_face, models_present
+from .colour import ColourFilter
+from .colour import draw_tag as draw_colour_tag
 from .geo import TileCache
 from .recorder import Recorder
 
@@ -74,6 +76,7 @@ class CamsSystem:
         # video: recordings, sighting clips and exports; satellite tiles for the map
         self.recorder = Recorder(self)
         self.tiles = TileCache(paths.tiles)
+        self.colour = ColourFilter(self)
 
     # ================================================================ lifecycle
     def start(self) -> None:
@@ -96,6 +99,7 @@ class CamsSystem:
 
     def stop(self) -> None:
         self._stop.set()
+        self.colour.stop()
         self.recorder.stop_all()
         try:
             self.recorder.flush_clips()
@@ -232,6 +236,7 @@ class CamsSystem:
             "status": s.status, "fps": s.fps, "error": s.error,
             "width": s.width, "height": s.height,
             "faces": len(s.overlays) if time.time() - s.overlays_at < 3 else 0,
+            "colour": self.colour.active(cam_id),
         }
 
     def _on_frame(self, worker: CameraWorker, frame: np.ndarray) -> None:
@@ -240,7 +245,8 @@ class CamsSystem:
         self._queue_analysis(worker, frame)
         st = worker.state
         try:
-            self.recorder.tap(worker.id, st.name, frame, st.overlays, time.time() - st.overlays_at < 2.5)
+            self.recorder.tap(worker.id, st.name, frame, st.overlays, time.time() - st.overlays_at < 2.5,
+                              colour=lambda img, want: self.colour.apply(worker.id, img, tag=True, want=want)[0])
         except Exception:
             log.exception("Clip buffer failed on camera %s", worker.id)
 
@@ -443,15 +449,25 @@ class CamsSystem:
         return buf.tobytes() if ok else None
 
     def _dress(self, w: CameraWorker, frame: np.ndarray, max_width: int, annotate: bool) -> np.ndarray:
+        """The picture people see: smaller, coloured if it is black and white (when asked),
+        strangers blurred, name boxes."""
         st = w.state
+        h, wd = frame.shape[:2]
+        k = 1.0
+        if wd > max_width:
+            k = max_width / wd
+            frame = cv2.resize(frame, (max_width, int(h * k)), interpolation=cv2.INTER_AREA)
+        frame, coloured = self.colour.apply(w.id, frame)
+        sc = (lambda b: tuple(int(round(v * k)) for v in b)) if k != 1.0 else (lambda b: tuple(int(v) for v in b))
         fresh = time.time() - st.overlays_at < 2.5
         if fresh and annotate:
-            for (px, py, pw, ph) in getattr(st, "people", []):
+            for p in getattr(st, "people", []):
+                px, py, pw, ph = sc(p[:4])
                 cv2.rectangle(frame, (px, py), (px + pw, py + ph), (200, 200, 200), 1)
         if fresh:
             blur = self.setting("blur_unknown") == "1"
             for o in st.overlays:
-                x, y, bw, bh = o["box"]
+                x, y, bw, bh = sc(o["box"])
                 if o["person_id"] is None:
                     if blur:
                         blur_region(frame, (x, y, bw, bh))
@@ -466,9 +482,8 @@ class CamsSystem:
                     (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
                     cv2.rectangle(frame, (x, max(0, y - th - 8)), (x + tw + 8, y), color, -1)
                     cv2.putText(frame, label, (x + 4, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
-        h, wd = frame.shape[:2]
-        if wd > max_width:
-            frame = cv2.resize(frame, (max_width, int(h * max_width / wd)))
+        if coloured:
+            draw_colour_tag(frame)
         return frame
 
     # ================================================================ maintenance

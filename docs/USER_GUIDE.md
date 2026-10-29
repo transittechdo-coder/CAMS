@@ -215,6 +215,18 @@ Open **Find a person** and type a name or ID number.
   from automatic deletion.
 - **Download a part:** on **Recordings**, choose the camera, the day and the time from / to, then
   press **Download this part**. The bar shows which times were recorded (click it to pick a time).
+- **Colour at night:** most CCTV cameras turn black and white at night (infrared). CAMS can colour
+  that video live with an AI:
+  1. In **Settings > Colour for black-and-white (night) video**, press **Download the colour AI**
+     (about 130 MB, internet needed once). With no internet, copy the file `colorizer.onnx` onto a
+     USB stick on another PC and press **Load colorizer.onnx from this PC**.
+  2. On **Cameras**, press **Edit** on a camera and choose **Colour for black-and-white video**:
+     *Automatic* (only when the camera shows black and white) or *Always* (an old black-and-white
+     camera).
+  Coloured pictures are marked **AI colour**. The colours are the AI's guess: **never trust the
+  colour of clothes or a car in AI-coloured video.** CAMS also makes dark night pictures clearer;
+  you can switch this off. On a slow PC choose **Colour AI speed: Light**. Face recognition always
+  uses the camera's real picture.
 - **Alerts** lists watch-list sightings, strangers on restricted cameras and offline cameras.
   New alerts also pop up in the corner. Press **Seen** when handled.
 
