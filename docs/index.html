@@ -244,6 +244,44 @@ footer a { color: var(--ink-2); }
 
     <div class="feature flip">
       <div>
+        <h3>See the route, watch the moment</h3>
+        <ul>
+          <li>A person's day is drawn as a line from building to building, with arrows for the direction and a numbered stop for each place.</li>
+          <li>Each stop has a small picture of the person; click it to watch a short clip of the moment they were seen there.</li>
+          <li>Every camera and sighting has an exact GPS position you can copy into Google Maps.</li>
+        </ul>
+      </div>
+      <img src="images/route-clips.png" alt="Find a person: a route drawn from building to building with numbered stops, small pictures and Watch buttons" loading="lazy" width="1440" height="900">
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>Record and download video</h3>
+        <ul>
+          <li>Press <strong>Record</strong> on any camera, or let a camera record all the time.</li>
+          <li>Play recordings inside CAMS, or download them as .mp4 files.</li>
+          <li><strong>Download a part:</strong> choose the camera, the day and the time from / to.</li>
+          <li>Old videos delete themselves after the days you choose, or when their disk space is full.</li>
+        </ul>
+      </div>
+      <img src="images/recordings.png" alt="Recordings page: download a part of a camera's video by day and time, and a list of recorded videos with Play and Download" loading="lazy" width="1440" height="900">
+    </div>
+
+    <div class="feature flip">
+      <div>
+        <h3>Hologram 3D view</h3>
+        <ul>
+          <li>One button turns the 3D campus into a digital blueprint: see-through teal walls with glowing edges on a dark grid.</li>
+          <li>See rooms, stairs and cameras inside every building at once. The model turns by itself; drag to turn it yourself.</li>
+          <li><strong>Colour at night:</strong> black-and-white infrared CCTV video can be coloured live by an AI (marked "AI colour", because the colours are a guess).</li>
+          <li>Find your compound on a real satellite map of the world and use it as your campus map.</li>
+        </ul>
+      </div>
+      <img src="images/hologram.png" alt="Hologram 3D view: see-through teal buildings with glowing edges on a dark grid, with a legend and a pause button" loading="lazy" width="798" height="691">
+    </div>
+
+    <div class="feature flip">
+      <div>
         <h3>Build your campus</h3>
         <ul>
           <li>Trace buildings, gates, fields and parking over a plan or satellite picture.</li>
@@ -379,7 +417,7 @@ footer a { color: var(--ink-2); }
       <div><h3>Strangers stay anonymous</h3><p>People who are not enrolled are blurred in the live view and saved pictures.</p></div>
       <div><h3>Delete on request</h3><p>One button erases a person with every picture and sighting. Old records delete themselves after the days you choose.</p></div>
       <div><h3>The right people only</h3><p>Admin, operator and viewer accounts. Every search, change and deletion is written to an activity log.</p></div>
-      <div><h3>Stays on your PC</h3><p>Nothing is sent to the internet or to TransitTech.</p></div>
+      <div><h3>Stays on your PC</h3><p>Nothing is sent to the internet or to TransitTech. Only if you choose the satellite map does CAMS ask a map service for the picture of your area; no video, faces or names ever leave the PC.</p></div>
       <div><h3>Check before acting</h3><p>A match is a lead to confirm with your own eyes, never proof on its own.</p></div>
     </div>
     <p style="margin-top:22px">Read the <a href="https://github.com/transittechdo-coder/CAMS/blob/main/docs/PRIVACY.md">privacy guide</a> before you enrol anyone. In Tanzania, follow the Personal Data Protection Act, 2022.</p>
@@ -397,12 +435,12 @@ footer a { color: var(--ink-2); }
         <dt>Graphics</dt><dd>No graphics card needed</dd>
         <dt>Disk</dt><dd>About 400 MB, plus room for sightings</dd>
         <dt>Cameras</dt><dd>About 8 to 12 per PC at the default speed</dd>
-        <dt>Internet</dt><dd>Only to download the installer</dd>
+        <dt>Internet</dt><dd>Only to download the installer (and, if you want them, once for the satellite map and the night colour AI)</dd>
       </dl>
     </div>
     <div>
       <div class="head"><h2>Questions</h2></div>
-      <details><summary>Does CAMS need the internet?</summary><p>No. After you download the installer, CAMS works with no internet at all. Cameras are reached over your local network.</p></details>
+      <details><summary>Does CAMS need the internet?</summary><p>No. After you download the installer, CAMS works with no internet at all. Cameras are reached over your local network. Two optional extras use the internet once: fetching the satellite picture of your compound, and downloading the colour AI for night video. After that they work offline too.</p></details>
       <details><summary>Do I need administrator rights?</summary><p>No. CAMS installs for the person who runs the installer, like Scratch or Zoom. An IT admin can install it for every user with <code>CAMS-Setup.exe /ALLUSERS</code>.</p></details>
       <details><summary>Windows says "Windows protected your PC".</summary><p>That warning appears for new programs that aren't code-signed. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p></details>
       <details><summary>Where is my data, and is it removed if I uninstall?</summary><p>It is in <code>%APPDATA%\CAMS</code> and is kept when you uninstall or update, so you don't lose people or settings. Delete that folder to remove it.</p></details>
