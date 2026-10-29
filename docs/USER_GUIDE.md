@@ -65,12 +65,26 @@ Open **Campus builder**.
 3. Name each shape and choose its type: building, zone, gate, field or parking. Buildings get a
    height and number of floors for the 3D view.
 4. Under **Cameras**, choose a camera that is not on the map yet, then click where it is mounted.
+   Press **New camera** to add another camera at any time (even when all cameras are already on
+   the map), then click where it hangs. Open **On the map** and press **Move** to give a placed
+   camera a new spot.
 5. Drag the **amber handle** so the cone points the way the camera looks. You can also set the
    building and floor it is on.
 6. **Arrange** a selected building with **Turn left**, **Turn right**, **90°** and **Duplicate**,
    or drag it. Under **Floors**, press **Add floor** and give each floor a name (Ground floor,
    Reading room, ...). Cameras can then be placed on a named floor.
 7. Press **3D** (top right of the map) to see the campus in 3D, with floor lines on each building.
+
+### Hologram view (see-through 3D)
+
+In any 3D view (the **3D** button on a map, or the 3D Map Studio) press **Hologram**. Buildings
+become see-through glass with glowing edges on a dark blueprint grid, so you can see rooms,
+stairs and cameras inside every building at once. A legend and a compass appear on the view. Press
+**Hologram** again for the normal look. CAMS remembers your choice.
+
+In the 3D Map Studio, the **CCTV camera** tool (Tools tab) lists your cameras: **Place** puts a
+camera that is not on the map yet (click on the ground, a floor or a wall), **Move** gives a camera
+a new place, and **+ Add a new camera** adds another camera to CAMS and lets you place it.
 
 ### Real satellite map and exact GPS positions
 

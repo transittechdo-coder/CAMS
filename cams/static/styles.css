@@ -564,3 +564,27 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .sat-wrap .leaflet-container { font: 12px var(--body); }
 .search.grow { flex: 1; }
 .panel-head input[type="date"] { width: auto; flex: none; }
+
+/* ------------------------------------------------------------ hologram 3D view (X-ray / rim light) */
+.holo-hud { position: absolute; inset: 0; pointer-events: none; z-index: 3; font: 12.5px var(--body); color: #bff6ff; }
+.holo-legend { position: absolute; top: 10px; left: 12px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  padding: 6px 12px; background: rgba(4, 12, 22, .72); border: 1px solid rgba(46, 232, 255, .35); border-radius: 4px; text-shadow: 0 0 6px rgba(46, 232, 255, .6); }
+.holo-legend span { display: inline-flex; gap: 6px; align-items: center; }
+.holo-legend .faint { color: #7fb7c4; }
+.holo-legend i.dot { width: 10px; height: 10px; border-radius: 50%; background: #2ee8ff; box-shadow: 0 0 8px #2ee8ff; }
+.holo-legend i.sq { width: 10px; height: 10px; background: #13707f; border: 1px solid #2ee8ff; }
+.holo-compass { position: absolute; left: 14px; bottom: 14px; width: 54px; height: 54px; border-radius: 50%; border: 1px solid rgba(46, 232, 255, .6);
+  background: rgba(4, 12, 22, .6); box-shadow: 0 0 12px rgba(46, 232, 255, .25) inset; }
+.holo-needle { position: absolute; inset: 0; transition: transform .1s linear; }
+.holo-needle::before { content: ""; position: absolute; left: 50%; top: 9px; width: 2px; height: 18px; margin-left: -1px; background: #2ee8ff; box-shadow: 0 0 6px #2ee8ff; }
+.holo-needle b { position: absolute; left: 50%; top: -1px; transform: translateX(-50%); font: 700 10px var(--display); color: #2ee8ff; }
+.holo-corner { position: absolute; width: 22px; height: 22px; border: 0 solid rgba(46, 232, 255, .7); }
+.holo-corner.tl { top: 6px; left: 6px; border-top-width: 2px; border-left-width: 2px; }
+.holo-corner.tr { top: 6px; right: 6px; border-top-width: 2px; border-right-width: 2px; }
+.holo-corner.bl { bottom: 6px; left: 6px; border-bottom-width: 2px; border-left-width: 2px; }
+.holo-corner.br { bottom: 6px; right: 6px; border-bottom-width: 2px; border-right-width: 2px; }
+.map-tools .holo-btn[aria-pressed="true"], .studio .st-top button.holo-on { background: #062a33; color: #2ee8ff; border-color: #2ee8ff; box-shadow: 0 0 8px rgba(46, 232, 255, .45); }
+.map-tools.right { z-index: 4; }
+.st-cams { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 6px; }
+.st-cams .st-cam { display: inline-flex; gap: 2px; }
+.studio .st-view .holo-legend { top: auto; bottom: 16px; left: 80px; }

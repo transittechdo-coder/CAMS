@@ -3,6 +3,7 @@
 // shows the GPS position under the mouse and the satellite picture's credit.
 import { h, get, toLatLng, fmtLatLng, copyText } from "./util.js";
 import { SiteMap } from "./map2d.js";
+import { savedStyle, saveStyle } from "./hologram.js";
 
 export class MapView {
   constructor(container, { height = "tall", editable = false, mapOpts = {}, allow3d = true } = {}) {
@@ -25,7 +26,10 @@ export class MapView {
         h("button", { "aria-pressed": String(this.mode === "2d"), onclick: () => this.setMode("2d") }, "Plan"),
         h("button", { "aria-pressed": String(this.mode === "3d"), onclick: () => this.setMode("3d") }, "3D"),
       );
-      this.wrap.append(h("div", { class: "map-tools right" }, this.seg,
+      this.style = savedStyle();
+      this.holoBtn = h("button", { class: `small holo-btn${this.mode === "3d" ? "" : " hidden"}`, "aria-pressed": String(this.style === "hologram"),
+        title: "Hologram view: see-through glowing walls on a dark blueprint", onclick: () => this.setStyle(this.style === "hologram" ? "normal" : "hologram") }, "Hologram");
+      this.wrap.append(h("div", { class: "map-tools right" }, this.seg, this.holoBtn,
         h("button", { class: "small", onclick: () => this.fit(), title: "Show the whole site" }, "Fit")));
     }
   }
@@ -68,13 +72,23 @@ export class MapView {
         }
       }
       this.box3d.classList.remove("hidden");
+      this.holoBtn?.classList.remove("hidden");
+      this.view3d.setStyle(this.style);
       if (this.data) this.view3d.setData(this.data);
       this.view3d.setMarks(this._marks3d());
     } else {
       this.map2d.svg.classList.remove("hidden");
       this.box3d?.classList.add("hidden");
+      this.holoBtn?.classList.add("hidden");
       this.map2d._applyView();
     }
+  }
+
+  setStyle(style) {
+    this.style = style;
+    saveStyle(style);
+    this.holoBtn?.setAttribute("aria-pressed", String(style === "hologram"));
+    this.view3d?.setStyle(style);
   }
 
   setMarks({ pins = [], trail = [] }) {

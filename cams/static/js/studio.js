@@ -6,6 +6,7 @@ import { TransformControls } from "/static/vendor/TransformControls.js";
 import { h, get, put, patch, post, toast, fail, confirmBox, logoMark, mouseSwapped } from "./util.js";
 import { TYPES, CATS, MATERIALS, defaults, buildObject, disposeGroup, setupLights, fitSunShadow, material } from "./world3d.js";
 import { CameraRig } from "./camrig.js";
+import { Hologram, savedStyle, saveStyle } from "./hologram.js";
 
 const SWATCHES = ["#e9e4da", "#e6e1d6", "#cfc8bb", "#9fb4c8", "#5b8def", "#0b7a75", "#3f8a3a", "#6aa84f",
   "#c27a5a", "#b5533c", "#8f3f30", "#d0763a", "#e3a21a", "#c9b067", "#8a5a36", "#55595e", "#8e9ba5", "#2d2f33", "#ffffff", "#c23a2b"];
@@ -102,6 +103,7 @@ export async function openStudio({ onClose } = {}) {
   composeGround();
 
   let grid;
+  let holo = null;                  // hologram look (see-through glowing walls)
   function makeGrid() {
     if (grid) { scene.remove(grid); grid.geometry.dispose(); }
     const span = Math.ceil(Math.max(W, H) / 10) * 10;
@@ -109,6 +111,10 @@ export async function openStudio({ onClose } = {}) {
     grid.material.transparent = true; grid.material.opacity = 0.35; grid.material.depthWrite = false;
     grid.position.set(span / 2, levelY() + 0.02, span / 2);
     scene.add(grid);
+    if (holo) {
+      holo.hideInHolo = [outer, grid];
+      if (holo.on) { grid.userData._wasVisible = true; grid.visible = false; }
+    }
   }
 
   // ---------------------------------------------------------------- state
@@ -206,7 +212,7 @@ export async function openStudio({ onClose } = {}) {
       const wedge = new THREE.Mesh(new THREE.ShapeGeometry(wedgeShape).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: "#00998c", transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }));
       wedge.position.y = -0.2; wedge.scale.z = -1;
       wedge.rotation.x = 0.35;
-      [body, lens].forEach((m) => { m.userData.camId = c.id; m.castShadow = true; });
+      [body, lens].forEach((m) => { m.userData.camId = c.id; m.castShadow = true; m.userData.holoSolid = true; });
       g.add(body, lens, wedge);
       g.userData.camId = c.id;
       const bld = mapData.buildings.find((b) => b.id === c.building_id);
@@ -389,6 +395,8 @@ export async function openStudio({ onClose } = {}) {
     blocked,
     onWalkExit: () => setWalk(false),
   });
+  holo = new Hologram(scene, { roots: [world, extras], ground, hideInHolo: [outer], container: viewBox, rig });
+  holo.setSite(W, H);
   if (doc.view?.pos) {
     camera.position.fromArray(doc.view.pos); rig.yaw = doc.view.yaw; rig.pitch = doc.view.pitch; rig._apply();
   } else {
@@ -488,6 +496,11 @@ export async function openStudio({ onClose } = {}) {
     if (e.button !== 0 || e.altKey || rig.mode === "walk") return;
     if (tc.dragging || tc.axis) return;       // the gizmo took it
     canvas.focus();
+    if (tool === "placecam" && placingCam != null) {
+      const surf = surfaceAt(e.clientX, e.clientY);
+      if (surf) placeCamAt(placingCam, surf.point.x, surf.point.z, surf.baseY);
+      return;
+    }
     const type = placing();
     if (type) {
       const surf = surfaceAt(e.clientX, e.clientY); if (!surf) return;
@@ -793,6 +806,13 @@ export async function openStudio({ onClose } = {}) {
   const btn = (label, onclick, attrs = {}) => h("button", { class: "small", onclick, ...attrs }, label);
   const saveBtn = btn("Saved", () => save(), { title: "Save the map (Ctrl+S)" });
   const walkBtn = btn("Walk inside", () => setWalk(rig.mode !== "walk"), { "aria-pressed": "false", title: "Walk around at eye height like in a game" });
+  const holoBtn = btn("Hologram", () => setHolo(!holo.on), { "aria-pressed": "false", title: "Hologram view: see-through glowing walls on a dark blueprint (X-ray look)" });
+  function setHolo(on) {
+    holo.set(on); saveStyle(on ? "hologram" : "normal");
+    holoBtn.setAttribute("aria-pressed", String(on));
+    holoBtn.classList.toggle("holo-on", on);
+    root.classList.toggle("holo", on);
+  }
   const toolSeg = h("div", { class: "seg", role: "group", "aria-label": "Edit tool" });
   const TOOLBAR = [["select", "Select", "V"], ["move", "Move", "G"], ["rotate", "Turn", "R"], ["scale", "Size", "T"]];
   for (const [id, label, key] of TOOLBAR) toolSeg.append(h("button", { "data-tool": id, title: `${label} (${key})`, onclick: () => setTool(id) }, label));
@@ -823,7 +843,7 @@ export async function openStudio({ onClose } = {}) {
       btn("▼", () => setLevel(level - 1), { "aria-label": "Floor down" }), levelLbl, btn("▲", () => setLevel(level + 1), { "aria-label": "Floor up" }),
       h("label", { class: "check", title: "Hide everything above this floor so you can see inside" }, cutBox, "Cut above")),
     h("div", { class: "st-group" }, btn("Top", () => setView("top")), btn("Front", () => setView("front")), btn("Side", () => setView("side")), btn("3D", () => setView("persp")),
-      btn("Focus", focus, { title: "Fly to the chosen shape (F)" }), walkBtn, h("label", { class: "st-speed", title: "Camera speed" }, "Speed", speed)),
+      btn("Focus", focus, { title: "Fly to the chosen shape (F)" }), walkBtn, holoBtn, h("label", { class: "st-speed", title: "Camera speed" }, "Speed", speed)),
     h("div", { class: "st-group st-end" }, btn("Help", showHelp, { title: "Controls (F1)" }), btn("Photo", photo, { title: "Save a picture of the view" }), saveBtn,
       btn("Close", () => close(), { title: "Close Map Studio" })),
   );
@@ -837,12 +857,15 @@ export async function openStudio({ onClose } = {}) {
     toolSeg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === t)));
     left.querySelectorAll("[data-tool]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tool === t)));
     attachGizmo();
-    canvas.style.cursor = t.startsWith("place:") || ["paint", "erasePaint", "scatter", "measure", "freehand", "picker"].includes(t) ? "crosshair" : t === "eraser" ? "not-allowed" : "default";
+    if (t !== "placecam") placingCam = null;
+    canvas.style.cursor = t.startsWith("place:") || ["placecam", "paint", "erasePaint", "scatter", "measure", "freehand", "picker"].includes(t) ? "crosshair" : t === "eraser" ? "not-allowed" : "default";
     const type = placing();
     showHint(type ? (TYPES[type].line ? `Click to start the ${TYPES[type].label.toLowerCase()}, then click each corner. Esc to finish.`
       : FIXED.has(type) ? `Click to place a ${TYPES[type].label.toLowerCase()}. Drag while clicking to turn it.${ON_WALL.has(type) ? " Point at a wall to fix it on the wall." : ""}`
       : ROOFLIKE.has(type) ? `Point at the top of a building or block and click: the ${TYPES[type].label.toLowerCase()} fits itself. Or drag to draw its size.`
-      : `Click to place, or drag to draw its size. Point at the top of another shape to stack on it.`) : TOOL_HINTS[t]);
+      : `Click to place, or drag to draw its size. Point at the top of another shape to stack on it.`)
+      : t === "placecam" ? `Click where the camera "${mapData.cameras.find((c) => c.id === placingCam)?.name || ""}" hangs (on the ground, a wall or a floor). Esc to stop.`
+      : TOOL_HINTS[t]);
     drawBrushPanel();
   }
   function showHint(text) {
@@ -865,11 +888,12 @@ export async function openStudio({ onClose } = {}) {
   const TOOL_ITEMS = [
     ["select", "Select & drag", "▢"], ["paint", "Paint ground", "🖌"], ["erasePaint", "Rub out paint", "⌫"], ["scatter", "Plant trees", "🌳"],
     ["freehand", "Draw path", "〰"], ["eraser", "Delete brush", "✖"], ["measure", "Measure", "📏"], ["picker", "Copy colour", "💧"],
+    ["cctv", "CCTV camera", "📷"],
   ];
   function drawPaletteItems() {
     if (tab === "tools") {
       leftBody.replaceChildren(h("div", { class: "st-items" }, TOOL_ITEMS.map(([id, label, ic]) =>
-        h("button", { class: "st-item", "data-tool": id, "aria-pressed": String(tool === id), onclick: () => setTool(id) }, h("span", { class: "st-ic" }, ic), h("span", {}, label)))));
+        h("button", { class: "st-item", "data-tool": id, "aria-pressed": String(tool === id), onclick: () => (id === "cctv" ? showCameraChooser() : setTool(id)) }, h("span", { class: "st-ic" }, ic), h("span", {}, label)))));
       return;
     }
     const items = Object.entries(TYPES).filter(([, t]) => t.cat === tab);
@@ -964,7 +988,8 @@ export async function openStudio({ onClose } = {}) {
         h("p", {}, "Pick a shape on the left and click in the view to add it, or click a shape in the view to change it."),
         h("p", { class: "hint" }, `${doc.objects.length} shapes on this map.`),
         h("div", { class: "st-keys" }, ...[["Right-drag", "look around"], ["W A S D", "fly"], ["Q / E", "down / up"], ["Wheel", "zoom"], ["Middle-drag", "slide view"], ["F", "focus"]]
-          .map(([k, v]) => h("div", {}, h("kbd", {}, k), v)))));
+          .map(([k, v]) => h("div", {}, h("kbd", {}, k), v))),
+        camerasPanel()));
       drawPalette();
       return;
     }
@@ -1035,6 +1060,54 @@ export async function openStudio({ onClose } = {}) {
     drawPalette();
   }
 
+  // ---------------------------------------------------------------- CCTV cameras: add and place
+  let placingCam = null;
+  function startPlacing(id) { placingCam = id; setTool("placecam"); }
+  function showCameraChooser() {
+    setTool("select"); select([]);
+    rtab = "props"; drawRightTabs(); drawProps();
+    rightBody.querySelector(".st-cams")?.scrollIntoView({ block: "nearest" });
+    showHint("Choose a camera on the right: Place puts a camera that is not on the map yet, Move gives a camera a new place, and + Add a new camera adds another one.");
+  }
+  function insideBuilding(x, z) {
+    return mapData.buildings.find((b) => b.kind === "building" && b.polygon.length > 2 && pointIn(x, z, b.polygon)) || null;
+  }
+  async function placeCamAt(id, x, z, baseY) {
+    const b = insideBuilding(x, z);
+    const floor = b ? Math.max(0, Math.min(b.floors - 1, Math.round(baseY / (b.height_m / Math.max(1, b.floors))))) : 0;
+    const body = { map_x: round(x, 10), map_y: round(z, 10), building_id: b ? b.id : null, floor };
+    try {
+      await patch(`/api/cameras/${id}/place`, body);
+      Object.assign(mapData.cameras.find((c) => c.id === id) || {}, body);
+      drawExtras();
+      placingCam = null;
+      setTool("select");
+      select([], id);
+      toast(`Camera placed${b ? ` in ${b.name}` : ""}. Use Turn to point it the right way.`);
+    } catch (e) { fail(e); }
+  }
+  async function refreshCameras() {
+    const fresh = await get("/api/map");
+    mapData.cameras = fresh.cameras;
+    drawExtras();
+  }
+  function camerasPanel() {
+    const placed = mapData.cameras.filter((c) => c.map_x != null), waiting = mapData.cameras.filter((c) => c.map_x == null);
+    return h("div", { class: "st-cams" },
+      h("h4", {}, "CCTV cameras"),
+      waiting.length ? h("p", { class: "hint" }, "Not on the map yet: choose one, then click where it hangs.") : null,
+      h("div", { class: "st-actions" },
+        ...waiting.map((c) => btn(`Place ${c.name}`, () => startPlacing(c.id), { class: "small primary" })),
+        ...placed.map((c) => h("span", { class: "st-cam" }, btn(c.name, () => { select([], c.id); focus(); }, { title: "Go to this camera" }),
+          btn("Move", () => startPlacing(c.id), { class: "small ghost", title: "Click a new place for this camera" })))),
+      btn("+ Add a new camera", async () => {
+        try {
+          const { cameraDialog } = await import("./pages.js");
+          cameraDialog(null, async (id) => { await refreshCameras(); drawProps(); if (id) startPlacing(id); });
+        } catch (e) { fail(e); }
+      }, { class: "small", title: "Add another CCTV camera to CAMS and put it on the map" }));
+  }
+
   function drawCamProps() {
     const c = mapData.cameras.find((x) => x.id === selCam);
     const g = camMarks.get(selCam);
@@ -1059,9 +1132,8 @@ export async function openStudio({ onClose } = {}) {
       if (!doc.objects.length) list.append(h("p", { class: "hint" }, "No shapes yet."));
     };
     q.addEventListener("input", fill); fill();
-    const camsList = mapData.cameras.filter((c) => c.map_x != null).map((c) => h("button", { class: "small", onclick: () => { select([], c.id); focus(); } }, c.name));
     rightBody.replaceChildren(h("div", { class: "stack" }, q, list,
-      camsList.length ? h("div", {}, h("h4", {}, "CCTV cameras"), h("div", { class: "st-actions" }, camsList)) : null,
+      camerasPanel(),
       doc.objects.some((o) => o.hidden) ? btn("Show all hidden", () => { doc.objects.forEach((o) => { o.hidden = false; groups.get(o.id).visible = true; }); markDirty(); fill(); }) : null));
   }
   function refreshOutline() { if (rtab === "list") drawList(); status.querySelector(".count").textContent = `${doc.objects.length} shapes`; }
@@ -1116,7 +1188,8 @@ export async function openStudio({ onClose } = {}) {
     sun.position.set(W / 2 + Math.cos(a) * span, Math.sin(a) * span * 1.2 + 20, H / 2 - span * 0.4);
     sun.target.position.set(W / 2, 0, H / 2);
     sun.intensity = 0.6 + Math.sin(a) * 1.5;
-    scene.background.set(t < 0.08 || t > 0.92 ? "#e9c9a4" : "#cfe3ee");
+    const sky = t < 0.08 || t > 0.92 ? "#e9c9a4" : "#cfe3ee";
+    if (holo?.on) holo._bg = new THREE.Color(sky); else scene.background.set(sky);
   }
 
   function addSample() {
@@ -1251,6 +1324,7 @@ export async function openStudio({ onClose } = {}) {
     if (!running) return;
     const dt = (now - last) / 1000; last = now;
     rig.update(dt);
+    holo?.sync();
     if (boxes.length) boxes.forEach((b) => b.update());
     renderer.render(scene, camera);
     requestAnimationFrame(loop);
@@ -1276,7 +1350,7 @@ export async function openStudio({ onClose } = {}) {
     running = false;
     window.removeEventListener("keydown", onKey);
     window.removeEventListener("beforeunload", beforeUnload);
-    rig.dispose(); tc.dispose(); ro.disconnect();
+    rig.dispose(); tc.dispose(); ro.disconnect(); holo.dispose();
     for (const g of groups.values()) disposeGroup(g);
     renderer.dispose();
     root.remove();
@@ -1286,6 +1360,7 @@ export async function openStudio({ onClose } = {}) {
 
   // ---------------------------------------------------------------- start
   drawTabs(); drawPaletteItems(); drawRightTabs(); drawExtras(); rebuildAll(); setLevel(0); applySnapToGizmo(); placeSun();
+  if (savedStyle() === "hologram") setHolo(true);
   setTool("select"); drawProps();
   requestAnimationFrame(loop);
   makeThumbs().then(() => drawPaletteItems());
@@ -1326,4 +1401,13 @@ function slowGraphics(renderer) {
     const name = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "";
     return /swiftshader|llvmpipe|software|basic render/i.test(name);
   } catch { return false; }
+}
+
+function pointIn(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi || 1e-9) + xi) inside = !inside;
+  }
+  return inside;
 }

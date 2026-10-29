@@ -478,7 +478,7 @@ async function person(el, id) {
 }
 
 // ======================================================================= cameras
-function cameraDialog(cam, after) {
+export function cameraDialog(cam, after) {
   const isNew = !cam;
   cam = cam || { name: "", source: "", restricted: 0, enabled: 1 };
   const templates = get("/api/cameras/templates");
@@ -533,9 +533,9 @@ function cameraDialog(cam, after) {
       const payload = { ...cam, name: v.name, source: v.source, enabled: v.enabled, restricted: v.restricted, kind: null,
         record_mode: v.record_always ? "always" : "off", colour_mode: v.colour_mode };
       delete payload.live; delete payload.source_display; delete payload.recording;
-      if (isNew) await post("/api/cameras", payload); else await put(`/api/cameras/${cam.id}`, payload);
-      toast(isNew ? "Camera added. Place it on the map in the Campus builder." : "Camera saved");
-      after();
+      const r = isNew ? await post("/api/cameras", payload) : await put(`/api/cameras/${cam.id}`, payload);
+      toast(isNew ? "Camera added. Now click where it hangs on the map." : "Camera saved");
+      after(isNew ? r.id : cam.id);
     } }],
   });
 }
@@ -883,11 +883,18 @@ async function builder(el) {
           toolBtn("rect", "Draw a rectangle", "rect", "Drag on the map to draw a rectangle."),
           toolBtn("polygon", "Draw any shape", "polygon", "Click each corner. Click the first corner (or press Enter) to finish. Esc cancels."))),
       ...props,
-      h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Cameras")),
+      h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "Cameras"),
+          h("button", { class: "small primary", title: "Add another CCTV camera and put it on the map", onclick: () => cameraDialog(null, async (id) => {
+            await reload(); placing = id; setMode("camera", "Click on the map where the new camera is mounted.");
+          }) }, icon("plus"), "New camera")),
         h("div", { class: "panel-body stack" },
           unplaced.length ? h("div", { class: "stack" }, h("p", { class: "hint", style: { margin: 0 } }, "Not on the map yet. Choose one, then click where it is."),
             ...unplaced.map((c) => h("button", { class: "tool", "aria-pressed": String(placing === c.id), onclick: () => { placing = c.id; setMode("camera", `Click on the map where "${c.name}" is mounted.`); } }, icon("camera"), c.name)))
-            : h("p", { class: "hint", style: { margin: 0 } }, d.cameras.length ? "All cameras are on the map. Click a camera to adjust it." : "Add cameras on the Cameras page first."),
+            : h("p", { class: "hint", style: { margin: 0 } }, d.cameras.length ? "All cameras are on the map. Drag a camera to move it, or press New camera to add another." : "Press New camera to add your first camera."),
+          d.cameras.filter((c) => c.map_x != null).length ? h("details", {}, h("summary", {}, `On the map (${d.cameras.filter((c) => c.map_x != null).length})`),
+            h("div", { class: "stack", style: { marginTop: "8px" } }, ...d.cameras.filter((c) => c.map_x != null).map((c) => h("div", { class: "row" },
+              h("button", { class: "tool grow", onclick: () => { selected = { kind: "camera", id: c.id }; map.select(selected); map.focus(c.map_x, c.map_y, 60); drawSide(); } }, icon("camera"), c.name),
+              h("button", { class: "small", "aria-pressed": String(placing === c.id), title: "Click a new place for this camera", onclick: () => { placing = c.id; setMode("camera", `Click the new place for "${c.name}".`); } }, "Move"))))) : null,
         )),
       h("section", { class: "panel" }, h("div", { class: "panel-head" }, h("h3", {}, "On the map")),
         h("ul", { class: "layer-list" }, d.buildings.map((b) => h("li", { class: bld && bld.id === b.id ? "sel" : "", onclick: () => {
