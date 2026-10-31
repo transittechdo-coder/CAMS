@@ -7,6 +7,11 @@ import { buildWorld, disposeGroup, setupLights, fitSunShadow } from "./world3d.j
 import { CameraRig } from "./camrig.js";
 import { Hologram, savedStyle } from "./hologram.js";
 
+// Small or older computers: fewer pixels, no shadows, smaller textures, so the map stays smooth.
+const LITE = (navigator.hardwareConcurrency || 4) <= 4 || (navigator.deviceMemory || 8) <= 4;
+const IDLE_REDRAW_MS = 500;        // when nothing moves, draw at most twice a second (textures arriving etc.)
+const PULSE_MS = 66;               // a pulsing marker is drawn about 15 times a second, not 60
+
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#888";
 }
@@ -16,9 +21,9 @@ export class Campus3D {
     this.container = container;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 20000);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = !/swiftshader|llvmpipe|software|basic render/i.test(rendererName(this.renderer));
+    this.renderer = new THREE.WebGLRenderer({ antialias: !LITE, alpha: false, powerPreference: LITE ? "low-power" : "default" });
+    this.renderer.setPixelRatio(LITE ? 1 : Math.min(window.devicePixelRatio, 1.5));
+    this.renderer.shadowMap.enabled = !LITE && !/swiftshader|llvmpipe|software|basic render/i.test(rendererName(this.renderer));
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     container.append(this.renderer.domElement);
     this.groups = { ground: new THREE.Group(), world: new THREE.Group(), buildings: new THREE.Group(), cameras: new THREE.Group(), marks: new THREE.Group() };
@@ -40,23 +45,75 @@ export class Campus3D {
     this._ro = new ResizeObserver(() => this._resize());
     this._ro.observe(container);
     this._resize();
+    // Draw only what is needed: only when the view moves or something changed, never while the
+    // map is off screen or the window is hidden, and only the shapes the camera can see.
     this._running = true;
+    this._dirty = true;
+    this._onScreen = true;
+    this._io = new IntersectionObserver((es) => { this._onScreen = es.some((e) => e.isIntersecting); if (this._onScreen) this.requestRender(); });
+    this._io.observe(container);
+    this._camKey = "";
+    this._frustum = new THREE.Frustum();
+    this._pv = new THREE.Matrix4();
     const loop = () => {
       if (!this._running) return;
-      const now = performance.now();
-      this.controls.update((now - (this._last || now)) / 1000);
-      this.holo.sync();
-      this._last = now;
-      this._t = (this._t || 0) + 0.03;
-      this.groups.marks.children.forEach((m) => { if (m.userData.pulse) m.scale.setScalar(1 + 0.25 * Math.sin(this._t * 3)); });
-      this.renderer.render(this.scene, this.camera);
       requestAnimationFrame(loop);
+      const now = performance.now();
+      const dt = (now - (this._last || now)) / 1000;
+      this._last = now;
+      if (!this._onScreen || document.hidden) return;
+      this.controls.update(dt);
+      this.holo.sync();
+      this.camera.updateMatrixWorld();
+      const key = this.camera.matrixWorld.elements.map((v) => v.toFixed(4)).join(",");
+      if (key !== this._camKey) { this._camKey = key; this._dirty = true; }
+      const pulsing = this.groups.marks.children.some((m) => m.userData.pulse);
+      if (pulsing && now - (this._drawnAt || 0) > PULSE_MS) {
+        const t = now / 1000;
+        this.groups.marks.children.forEach((m) => { if (m.userData.pulse) m.scale.setScalar(1 + 0.25 * Math.sin(t * 3)); });
+        this._dirty = true;
+      }
+      if (!this._dirty && now - (this._drawnAt || 0) < IDLE_REDRAW_MS) return;
+      this._dirty = false;
+      this._drawnAt = now;
+      this._cull();
+      this.renderer.render(this.scene, this.camera);
     };
     loop();
   }
 
+  requestRender() { this._dirty = true; }
+
+  // Hide every shape outside the camera's view before drawing, so they cost nothing
+  // (they are also left out of the shadow pass, which three.js would otherwise still draw).
+  _cull() {
+    this._pv.multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
+    this._frustum.setFromProjectionMatrix(this._pv);
+    const far = LITE ? 900 : 2500;
+    const cam = this.camera.position;
+    for (const g of [this.groups.world, this.groups.buildings, this.groups.cameras]) {
+      for (const o of g.children) {
+        const sph = o.userData.cullSphere;
+        if (!sph) continue;
+        o.visible = this._frustum.intersectsSphere(sph) && sph.center.distanceTo(cam) - sph.radius < far;
+      }
+    }
+  }
+
+  // Remember where each shape is (once), so _cull() can test it quickly.
+  _markCullable(group) {
+    for (const o of group.children) {
+      if (!o.visible || o.userData.cullSphere || o.isSprite) continue;
+      const box = new THREE.Box3().setFromObject(o);
+      if (box.isEmpty()) continue;
+      o.userData.cullSphere = box.getBoundingSphere(new THREE.Sphere());
+      o.userData.cullSphere.radius += 1;
+    }
+  }
+
   destroy() {
     this._running = false;
+    this._io?.disconnect();
     this.holo.dispose();
     this._ro.disconnect();
     this.controls.dispose();
@@ -71,6 +128,7 @@ export class Campus3D {
     this.renderer.setSize(r.width, r.height);
     this.camera.aspect = r.width / r.height;
     this.camera.updateProjectionMatrix();
+    this.requestRender();
   }
 
   _clear(g) {
@@ -174,6 +232,9 @@ export class Campus3D {
       if (v?.pos && !this._usedView) { this._usedView = true; this.camera.position.fromArray(v.pos); this.controls.yaw = v.yaw; this.controls.pitch = v.pitch; this.controls._apply(); }
       else this.controls.lookAt(new THREE.Vector3(W / 2 - span * 0.35, span * 0.75, H / 2 + span * 0.85), new THREE.Vector3(W / 2, 0, H / 2));
     }
+    this._markCullable(this.groups.buildings);
+    this._markCullable(this.groups.cameras);
+    this.requestRender();
   }
 
   // The 3D world drawn in Map Studio (buildings, roofs, stairs, trees, paint...)
@@ -186,6 +247,8 @@ export class Campus3D {
     // where the Map Studio shapes stand (ground position of each), to know which buildings it covers
     this._worldPts = w.children.map((c) => { const bb = new THREE.Box3().setFromObject(c); const m = bb.getCenter(new THREE.Vector3()); return [m.x, m.z]; });
     for (const c of [...w.children]) this.groups.world.add(c);
+    this._markCullable(this.groups.world);
+    this.requestRender();
     this._paintImg = null;
     if (this._scene?.paint) { const im = new Image(); im.onload = () => { this._paintImg = im; this._paintGround(); }; im.src = this._scene.paint; }
     if (this.data) { if (this._scene?.view?.pos && !this._usedView) this._framed = false; this.setData(this.data); }
@@ -196,7 +259,8 @@ export class Campus3D {
     if (!mat || !data) return;
     const showImage = this._scene?.settings?.showImage !== false;
     const draw = (img) => {
-      const W = 2048, H = Math.max(256, Math.round((2048 * data.height_m) / data.width_m));
+      const S = LITE ? 1024 : 2048;
+      const W = S, H = Math.max(256, Math.round((S * data.height_m) / data.width_m));
       const c = Object.assign(document.createElement("canvas"), { width: W, height: H });
       const g = c.getContext("2d");
       g.fillStyle = this._hasWorld ? "#dfe7d8" : cssVar("--sheet"); g.fillRect(0, 0, W, H);
@@ -204,12 +268,13 @@ export class Campus3D {
       if (this._paintImg) g.drawImage(this._paintImg, 0, 0, W, H);
       const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
       mat.map?.dispose(); mat.map = tex; mat.color.set(0xffffff); mat.needsUpdate = true;
+      this.requestRender();
     };
     if (data.image && showImage) { const im = new Image(); im.onload = () => draw(im); im.onerror = () => draw(null); im.src = data.image; }
     else if (this._paintImg || this._hasWorld) draw(null);
   }
 
-  setStyle(style) { this.holo.set(style === "hologram"); }
+  setStyle(style) { this.holo.set(style === "hologram"); this.requestRender(); }
 
   _covers(poly) {
     return (this._worldPts || []).some(([x, z]) => inside(x, z, poly));
@@ -235,6 +300,7 @@ export class Campus3D {
       const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(20, pts.length * 12), 0.35, 6), new THREE.MeshBasicMaterial({ color: amber }));
       this.groups.marks.add(tube);
     }
+    this.requestRender();
   }
 
   _label(text, x, z, y) {

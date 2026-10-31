@@ -207,7 +207,9 @@ export class SiteMap {
       if (len < 2 * px) continue;
       const late = i === pos.length - 1;
       lines.append(s("line", { class: `route-under`, x1: ax, y1: ay, x2: bx, y2: by }));
-      lines.append(s("line", { class: `route-line${late ? " last" : ""}`, x1: ax, y1: ay, x2: bx, y2: by }));
+      // older parts of the route are fainter, so the order in time can be seen on the map
+      lines.append(s("line", { class: `route-line${late ? " last" : ""}`, x1: ax, y1: ay, x2: bx, y2: by,
+        opacity: (0.3 + 0.7 * (i / (pos.length - 1))).toFixed(2) }));
       // arrow head half way: shows which way the person went
       const ux = (bx - ax) / len, uy = (by - ay) / len, mx = ax + (bx - ax) * 0.55, my = ay + (by - ay) * 0.55;
       const L = 9 * px, W = 5.5 * px;

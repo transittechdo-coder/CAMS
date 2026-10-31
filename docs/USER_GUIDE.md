@@ -216,7 +216,10 @@ Open **Find a person** and type a name or ID number.
   clip** of the moment they were seen there. The list beside the map shows the same stops with
   times, how long they stayed and a **Watch** button; the line above reads like
   *Asha went from Main gate → Block A → Library*.
-- Change the period: today, last 24 hours, last 7 or 30 days.
+- Change the period: the last hour, 3, 6 or 12 hours. The list is split into hours (*08:00 – 09:00, this
+  hour*), and on the map older parts of the route are fainter, so you can see the order at a glance.
+- Routes are kept for **12 hours** and then deleted by themselves, so CAMS stays small and fast.
+  Change this in **Settings → Data and storage**.
 - **Search by photo:** choose a photo (for example of a visitor); CAMS shows the most similar
   enrolled people. Always check with your own eyes before acting on a result.
 
@@ -251,13 +254,24 @@ Open **Find a person** and type a name or ID number.
 
 - **Match strictness:** if CAMS confuses two people, move it right; if it misses people, move it left.
 - **Pictures checked per second:** lower it if the PC is slow.
+- **Face AI speed:** *Automatic* picks *Fast* on PCs with 4 or fewer processor cores. *Detailed* finds
+  faces further from the camera but needs a strong PC. In every mode CAMS does not work out a face
+  again while it stays in the same place, and checks cameras where nothing moves less often.
 - **Maps and mouse** (every user): **Swapped** makes the **right** mouse button move the map (and
   turn around a point in 3D) and the left button look around in 3D. Clicking to choose and draw
   stays on the left button. The middle button (wheel) always moves the map.
-- **Privacy:** blur strangers, keep face pictures with sightings, delete sightings after N days.
+- **Privacy:** blur strangers, keep face pictures with sightings.
+- **Data and storage:** choose how long CAMS keeps each kind of data, see how much space each uses,
+  and **Delete now** any of them:
+  - *Routes* (where people were seen, with face pictures and clips): 12 hours unless you change it.
+  - *Alerts*, *Activity timeline and notes*: 30 days. *Camera recordings*: 7 days (videos marked
+    Keep stay).
+  - *Saved satellite map*: only the parts you look at are downloaded, up to 300 MB.
+  - *Always keep free on the disk* (5 GB): if the disk gets that full, the oldest videos go first.
+  CAMS cleans up by itself every 10 minutes. People, cameras, maps and settings are never deleted
+  automatically. *Never delete* keeps that kind of data for ever.
 - **Video recordings and clips:** short clips of each sighting on/off and their length, recording
-  speed and size, how many days recordings are kept, and the disk space they may use (the oldest
-  are deleted first when it is full).
+  speed and size, and the disk space recordings may use (the oldest are deleted first when it is full).
 - **Users:** add an account for each staff member. *Viewer* can watch and search, *Operator* can
   also enrol people and set up cameras, *Admin* can do everything.
 - **Backup:** download a backup zip and keep it locked away; it contains personal data.
@@ -343,23 +357,27 @@ Only people a camera saw that day are checked, so someone who stayed at home is 
 missing lunch. *Not seen in the dining hall* can also mean no camera saw them there: put cameras at
 the doors of places you check, and look before acting on a note.
 
-### Habits and changes from usual
+### Habits
 
 Each person's page shows their **usual pattern** for the last 3 weeks: when they usually arrive and
 leave, where they spend most time, what they usually do, and how often they keep each routine.
-Every evening (20:30, change it in **Activity & routines → How it works**) CAMS writes a summary of the
-day and notes **changes from usual**, such as arriving much later than usual, spending far more
-time than usual on one activity, a place they have not been in for weeks, or missing the same routine
-3 times in a week. These notes describe what cameras saw, never judgements about character.
+Every evening (20:30, change it in **Activity & routines → How it works**) CAMS writes a short summary
+of each person's day. (Since version 1.4 it no longer writes "changes from usual" notes every night,
+to keep CAMS light.)
 
-### Daily report and Ask CAMS
+### Daily report
 
-Open **Daily report**: for the chosen day it lists each person with first and last seen, where they
-were, what they did, routines kept, late or missed, and notes. Filter by type or class, **Print** it
+Open **Daily report**: for the chosen day it lists each person with first and last seen (and where),
+the places they were, routines kept, late or missed, and notes. Filter by type or class, **Print** it
 or **Download CSV** for Excel. **Write notes now** checks finished routines and writes the summaries
-straight away.
+straight away. It is kept short so it opens fast, even with many people. Remember that routes are
+deleted after 12 hours by default: for a full-day report, set *Routes* to 24 hours in **Settings →
+Data and storage**.
 
-At the top, **Ask CAMS** answers questions typed in plain English, offline:
+### Ask CAMS (removed from the report page)
+
+Version 1.4 removed the *Ask CAMS* box from the Daily report to keep it fast. It used to answer
+questions typed in plain English, offline:
 
 - *Who missed lunch today?* · *Who was late today?* · *Who was not seen today?*
 - *Where was Godwill at 8:00 AM?* · *What was Godwill doing at 10:30 yesterday?*

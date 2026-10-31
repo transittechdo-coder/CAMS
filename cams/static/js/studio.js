@@ -56,7 +56,7 @@ export async function openStudio({ onClose } = {}) {
 
   // ---------------------------------------------------------------- three
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, (navigator.hardwareConcurrency || 4) <= 4 ? 1 : 1.5));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.localClippingEnabled = false;
@@ -1148,7 +1148,7 @@ export async function openStudio({ onClose } = {}) {
     const shadowBox = h("input", { type: "checkbox", checked: doc.settings.shadows });
     shadowBox.addEventListener("change", () => {
       doc.settings.shadows = shadowBox.checked; renderer.shadowMap.enabled = shadowBox.checked;
-      renderer.setPixelRatio(shadowBox.checked ? Math.min(window.devicePixelRatio, 2) : 1);
+      renderer.setPixelRatio(shadowBox.checked ? Math.min(window.devicePixelRatio, (navigator.hardwareConcurrency || 4) <= 4 ? 1 : 1.5) : 1);
       scene.traverse((o) => { if (o.material) [].concat(o.material).forEach((m) => (m.needsUpdate = true)); });
       ro.disconnect(); ro.observe(viewBox); markDirty();
     });
@@ -1324,11 +1324,12 @@ export async function openStudio({ onClose } = {}) {
   function loop(now) {
     if (!running) return;
     const dt = (now - last) / 1000; last = now;
+    requestAnimationFrame(loop);
+    if (document.hidden) return;              // window minimised: draw nothing
     rig.update(dt);
     holo?.sync();
     if (boxes.length) boxes.forEach((b) => b.update());
     renderer.render(scene, camera);
-    requestAnimationFrame(loop);
   }
 
   // ---------------------------------------------------------------- close

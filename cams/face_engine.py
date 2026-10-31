@@ -25,6 +25,9 @@ YUNET_FILE = "face_detection_yunet_2023mar.onnx"
 SFACE_FILE = "face_recognition_sface_2021dec.onnx"
 MAX_DETECT_WIDTH = 960
 MIN_FACE_PX = 28
+# Picture width the face finder works at, per speed setting. Smaller is faster;
+# larger finds faces further from the camera.
+DETECT_WIDTHS = {"fast": 640, "balanced": 800, "detailed": 1280}
 
 # Face-visible views used for recognition, in capture order.
 ANGLES = ("front", "three_quarter_left", "left", "three_quarter_right", "right", "up", "down")
@@ -69,6 +72,7 @@ class FaceEngine:
         )
         self.recognizer = cv2.FaceRecognizerSF.create(str(models_dir / SFACE_FILE), "")
         self._size: tuple[int, int] | None = None
+        self.max_width = MAX_DETECT_WIDTH
 
     # ---------------------------------------------------------------- detect
     def detect(self, frame: np.ndarray) -> list[Face]:
@@ -77,9 +81,9 @@ class FaceEngine:
         h, w = frame.shape[:2]
         scale = 1.0
         img = frame
-        if w > MAX_DETECT_WIDTH:
-            scale = MAX_DETECT_WIDTH / w
-            img = cv2.resize(frame, (MAX_DETECT_WIDTH, int(round(h * scale))))
+        if w > self.max_width:
+            scale = self.max_width / w
+            img = cv2.resize(frame, (self.max_width, int(round(h * scale))), interpolation=cv2.INTER_AREA)
         ih, iw = img.shape[:2]
         if self._size != (iw, ih):
             self.detector.setInputSize((iw, ih))
@@ -118,6 +122,16 @@ class FaceEngine:
         for f in faces:
             self.embed(frame, f)
         return faces
+
+
+def box_iou(a, b) -> float:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
 
 
 # -------------------------------------------------------------------- pose

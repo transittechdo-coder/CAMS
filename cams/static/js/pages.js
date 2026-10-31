@@ -106,8 +106,22 @@ async function live(el) {
     return;
   }
   const caps = new Map();
+  // Only cameras you can see on the screen are streamed; scrolled away or window hidden = stopped.
+  const streamUrl = (id) => `/api/cameras/${id}/stream?fps=${cams.length > 6 ? 5 : 8}`;
+  const showing = new Set();
+  const setStream = (img, on) => {
+    const want = on && !document.hidden ? streamUrl(img.dataset.cam) : "";
+    if ((img.getAttribute("src") || "") !== want) { if (want) img.src = want; else img.removeAttribute("src"); }
+  };
+  const io = new IntersectionObserver((es) => es.forEach((e) => {
+    if (e.isIntersecting) showing.add(e.target); else showing.delete(e.target);
+    setStream(e.target, e.isIntersecting);
+  }), { rootMargin: "100px" });
+  const onVis = () => caps.forEach((t) => setStream(t.img, showing.has(t.img)));
+  document.addEventListener("visibilitychange", onVis);
   for (const c of cams) {
-    const img = h("img", { alt: `Live picture from ${c.name}`, src: `/api/cameras/${c.id}/stream?fps=8` });
+    const img = h("img", { alt: `Live picture from ${c.name}`, "data-cam": c.id });
+    io.observe(img);
     const dot = h("span", { class: `dot ${c.live.status}` });
     const meta = h("span", { class: "num" }, "");
     const off = h("div", { class: "cam-off hidden" });
@@ -150,7 +164,7 @@ async function live(el) {
   }
   refresh();
   const timer = setInterval(() => refresh().catch(() => {}), 2000);
-  return () => { clearInterval(timer); caps.forEach((t) => t.img.removeAttribute("src")); };
+  return () => { clearInterval(timer); io.disconnect(); document.removeEventListener("visibilitychange", onVis); caps.forEach((t) => t.img.removeAttribute("src")); };
 }
 
 // ======================================================================= find
@@ -213,8 +227,14 @@ async function find(el, pid) {
     const p = await get(`/api/people/${id}`);
     results.classList.add("hidden");
     const ls = p.last_seen;
-    const rangeSel = h("select", { "aria-label": "Time range" },
-      [["today", "Today"], ["86400", "Last 24 hours"], ["604800", "Last 7 days"], ["2592000", "Last 30 days"]].map(([v, l]) => h("option", { value: v }, l)));
+    // routes are kept for a set number of hours (Settings > Data and storage), so offer only those
+    let keepH = 12;
+    try { keepH = Number((await get("/api/settings")).route_hours ?? 12); } catch {}
+    const ranges = [[3600, "Last hour"], [3 * 3600, "Last 3 hours"], [6 * 3600, "Last 6 hours"], [12 * 3600, "Last 12 hours"],
+      [86400, "Last 24 hours"], [604800, "Last 7 days"], [2592000, "Last 30 days"]].filter(([v]) => !keepH || v <= keepH * 3600 + 1);
+    if (keepH && !ranges.some(([v]) => v >= keepH * 3600)) ranges.push([keepH * 3600, `Last ${keepH} hours`]);
+    const rangeSel = h("select", { "aria-label": "Time range" }, ranges.map(([v, l]) => h("option", { value: v }, l)));
+    rangeSel.value = String(ranges[Math.min(3, ranges.length - 1)][0]);
     const tl = h("ul", { class: "timeline route-list" });
     const summary = h("p", { class: "route-summary" });
     const mapBox = h("div");
@@ -249,9 +269,7 @@ async function find(el, pid) {
     }
 
     async function loadTimeline(auto = false) {
-      let since;
-      if (rangeSel.value === "today") { const d = new Date(); d.setHours(0, 0, 0, 0); since = d.getTime() / 1000; }
-      else since = Date.now() / 1000 - Number(rangeSel.value);
+      const since = Date.now() / 1000 - Number(rangeSel.value);
       const rows = await get(`/api/people/${id}/timeline?since=${since}`);
       const key = rows.map((r) => `${r.id}:${r.last_seen}:${r.clip_id}`).join("|");
       if (auto && key === lastKey) return;          // nothing new: keep the user's selection
@@ -277,7 +295,24 @@ async function find(el, pid) {
             st.clip ? h("button", { class: "small", onclick: (e) => { e.stopPropagation(); watch(st.rows.find((r) => r.clip_id) || st.rows[0], p.full_name, st); } }, icon("play"), "Watch") : null));
         return li;
       });
-      tl.replaceChildren(...(items.length ? [...items].reverse() : [h("li", {}, h("span", { class: "muted" }, "No sightings in this period."))]));
+      // newest first, with a heading for each hour so the timeline is easy to follow
+      const listed = [];
+      let hourKey = "";
+      for (let i = items.length - 1; i >= 0; i--) {
+        const d = new Date(stops[i].from * 1000);
+        const k = `${d.toDateString()} ${d.getHours()}`;
+        if (k !== hourKey) {
+          hourKey = k;
+          const hrs = Math.floor((Date.now() / 1000 - stops[i].from) / 3600);
+          listed.push(h("li", { class: "hour-head", "aria-hidden": "true" },
+            h("span", {}, `${String(d.getHours()).padStart(2, "0")}:00 – ${String((d.getHours() + 1) % 24).padStart(2, "0")}:00`),
+            h("span", { class: "faint" }, hrs < 1 ? "this hour" : hrs === 1 ? "1 hour ago" : `${hrs} hours ago`)));
+        }
+        listed.push(items[i]);
+      }
+      tl.replaceChildren(...(items.length ? listed : [h("li", {}, h("span", { class: "muted" }, "No sightings in this period."))]));
+      const hint = h("li", { class: "hint keep-hint" }, keepH ? `Routes are deleted ${keepH} hours after they happen (Settings → Data and storage).` : "");
+      if (keepH) tl.append(hint);
       map.setRoute(placed);
       if (!auto) {
         const last = placed[placed.length - 1];
@@ -294,6 +329,7 @@ async function find(el, pid) {
     function pick(i) {
       markItem(i);
       const st = stops[i];
+      if (!st) return;
       const k = map.route.indexOf(st);
       if (k >= 0) { map.selectStop(k); if (map.mode === "2d") map.map2d.focus(st.x, st.y, 70); }
     }
@@ -1185,11 +1221,14 @@ async function settings(el) {
       field("Pictures checked per second (per camera)", h("input", { name: "analysis_fps", type: "number", min: 0.2, max: 15, step: 0.5, value: s.analysis_fps, disabled: dis }), "Lower this on slow PCs."),
       field("Join sightings within (seconds)", h("input", { name: "sighting_merge_seconds", type: "number", min: 5, max: 600, value: s.sighting_merge_seconds, disabled: dis })),
       field("Recognition workers", h("input", { name: "workers", type: "number", min: 0, max: 16, value: s.workers, disabled: dis }), "0 = automatic. Restart CAMS after changing.")),
+    field("Face AI speed", h("select", { name: "speed_mode", disabled: dis, style: { maxWidth: "420px" } },
+      [["auto", "Automatic (Fast on small PCs, Balanced on others)"], ["fast", "Fast: for slow or old PCs"], ["balanced", "Balanced"], ["detailed", "Detailed: finds faces far from the camera, needs a strong PC"]]
+        .map(([v, l]) => h("option", { value: v, selected: v === (s.speed_mode || "auto") }, l))),
+      "Faces that stay in the same place are not worked out again, and cameras where nothing moves are checked less often, so CAMS stays smooth."),
   );
   const priv = h("div", { class: "stack" },
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "blur_unknown", checked: s.blur_unknown === "1", disabled: dis }), "Blur the faces of people who are not enrolled (live view and snapshots)"),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "save_snapshots", checked: s.save_snapshots === "1", disabled: dis }), "Keep a small face picture with each sighting"),
-    field("Delete sightings older than (days)", h("input", { name: "retention_days", type: "number", min: 1, max: 3650, value: s.retention_days, disabled: dis, style: { maxWidth: "160px" } }), "Keep only as long as you really need."),
   );
   const video = h("div", { class: "stack" },
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "sighting_clips", checked: s.sighting_clips !== "0", disabled: dis }),
@@ -1199,9 +1238,63 @@ async function settings(el) {
       field("Recording: pictures per second", h("input", { name: "record_fps", type: "number", min: 1, max: 25, value: s.record_fps, disabled: dis }), "8 is smooth enough for security video and saves space."),
       field("Recording size", h("select", { name: "record_width", disabled: dis }, [["640", "Small (640 wide)"], ["960", "Medium (960)"], ["1280", "HD (1280)"], ["1920", "Full HD (1920)"]].map(([v, l]) => h("option", { value: v, selected: v === String(s.record_width) }, l))))),
     h("div", { class: "grid3" },
-      field("Delete recordings older than (days)", h("input", { name: "recording_days", type: "number", min: 1, max: 365, value: s.recording_days, disabled: dis }), "Videos marked Keep are never deleted automatically."),
-      field("Space for recordings (GB)", h("input", { name: "recording_max_gb", type: "number", min: 1, max: 20000, value: s.recording_max_gb, disabled: dis }), "When full, the oldest videos are deleted first.")),
+      field("Space for recordings (GB)", h("input", { name: "recording_max_gb", type: "number", min: 1, max: 20000, value: s.recording_max_gb, disabled: dis }), "When full, the oldest videos are deleted first. Videos marked Keep are never deleted automatically.")),
   );
+
+  // ---- data and storage: what CAMS deletes by itself, and when
+  const keepSel = (name, unit, opts) => {
+    const cur = String(s[name] ?? "");
+    const list = opts.map(String);
+    if (cur && !list.includes(cur)) list.push(cur);
+    const say = (v) => (v === "0" ? "Never delete" : unit === "h" ? (Number(v) % 24 === 0 && Number(v) >= 24 ? `${Number(v) / 24} day${Number(v) === 24 ? "" : "s"}` : `${v} hour${v === "1" ? "" : "s"}`)
+      : unit === "d" ? `${v} day${v === "1" ? "" : "s"}` : unit === "mb" ? (Number(v) >= 1000 ? `${Number(v) / 1000} GB` : `${v} MB`) : `${v} GB`);
+    return h("select", { name, disabled: dis, "aria-label": name }, list.sort((a, b) => (a === "0") - (b === "0") || Number(a) - Number(b))
+      .map((v) => h("option", { value: v, selected: v === cur }, say(v))));
+  };
+  const mb = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : b >= 1e6 ? `${Math.round(b / 1e6)} MB` : b > 0 ? `${Math.max(1, Math.round(b / 1e3))} KB` : "0");
+  const usageCells = {};
+  const KINDS = [
+    ["routes", "Routes", "Every place a person was seen, with the small face pictures and short clips. Their last-seen place goes too.", keepSel("route_hours", "h", [1, 3, 6, 12, 24, 48, 168, 0])],
+    ["alerts", "Alerts", "Alerts and their pictures.", keepSel("alert_days", "d", [1, 7, 30, 90, 365, 0])],
+    ["activity", "Activity timeline and notes", "What people were doing, routine results and daily notes.", keepSel("retention_days", "d", [1, 7, 30, 90, 365, 0])],
+    ["recordings", "Camera recordings", "Videos recorded with Record or Record all the time. Videos marked Keep stay.", keepSel("recording_days", "d", [1, 3, 7, 14, 30, 90, 0])],
+    ["map_cache", "Saved satellite map", "Only the parts of the map you look at are downloaded and saved, up to this size.", keepSel("tiles_max_mb", "mb", [100, 300, 1000, 5000])],
+  ];
+  const dataRows = KINDS.map(([k, label, hint, sel]) => {
+    usageCells[k] = h("td", { class: "num" }, "…");
+    return h("tr", {},
+      h("td", {}, h("b", {}, label), h("div", { class: "hint" }, hint)),
+      usageCells[k],
+      h("td", {}, h("div", { class: "faint" }, k === "map_cache" ? "Keep up to" : "Delete after"), sel),
+      h("td", {}, admin ? h("button", { class: "small danger", onclick: async () => {
+        if (!(await confirmBox(`Delete all ${label.toLowerCase()} now?`, "This cannot be undone. People, cameras, maps and settings are not touched."))) return;
+        try { await post("/api/data/delete", { kinds: [k] }); toast(`${label} deleted`); loadUsage(); } catch (e) { fail(e); }
+      } }, "Delete now") : null));
+  });
+  const diskLine = h("div", { class: "stack" });
+  const data = h("div", { class: "stack" },
+    h("p", { class: "muted", style: { margin: 0 } }, "Choose how long CAMS keeps each kind of data. It deletes old data by itself every 10 minutes, so it never fills up the computer."),
+    h("table", { class: "list usage-table" }, h("thead", {}, h("tr", {}, ["What", "Space used", "Keep", ""].map((t) => h("th", {}, t)))), h("tbody", {}, dataRows)),
+    h("div", { class: "grid3" },
+      field("Always keep free on the disk", keepSel("min_free_gb", "gb", [2, 5, 10, 20, 0]), "If the disk gets this full, the oldest videos are deleted first.")),
+    diskLine);
+  async function loadUsage() {
+    if (!admin) return;
+    try {
+      const u = await get("/api/data/usage");
+      for (const [k] of KINDS) {
+        const x = u[k] || {};
+        usageCells[k].replaceChildren(mb(x.bytes || 0), x.count ? h("div", { class: "faint" }, `${x.count.toLocaleString()} item${x.count === 1 ? "" : "s"}`) : "");
+      }
+      const used = u.disk_total ? 1 - u.disk_free / u.disk_total : 0;
+      const st = u.stats || {};
+      diskLine.replaceChildren(...[
+        h("div", { class: "hint" }, `Disk: ${mb(u.disk_free)} free of ${mb(u.disk_total)}. Database ${mb(u.database?.bytes || 0)}, people's photos ${mb(u.people?.bytes || 0)} (kept until you delete the person).`),
+        h("div", { class: "usage-bar", role: "img", "aria-label": `Disk ${Math.round(used * 100)}% full` }, h("span", { style: { width: `${Math.round(used * 100)}%`, background: used > 0.9 ? "var(--red)" : "" } })),
+        st.frames_analysed ? h("div", { class: "hint" }, `Face AI now: ${u.speed_mode}. Since start: ${st.frames_analysed.toLocaleString()} pictures checked, ${(st.frames_skipped || 0).toLocaleString()} skipped because nothing moved, ${(st.prints_reused || 0).toLocaleString()} face prints reused.`) : null].filter(Boolean));
+    } catch (e) { diskLine.replaceChildren(h("p", { class: "error-text" }, e.message)); }
+  }
+  loadUsage();
   // ---- colour for black-and-white (night) video
   const aiBox = h("div", { class: "stack" });
   const modelIn = h("input", { type: "file", accept: ".onnx", class: "hidden" });
@@ -1245,10 +1338,10 @@ async function settings(el) {
   );
   drawAi().catch(() => {});
   const saveRow = admin ? h("div", { class: "row end" }, h("button", { class: "primary", onclick: async () => {
-    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video), ...formValues(colourOpts) };
+    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video), ...formValues(data), ...formValues(colourOpts) };
     v.colour_enhance = v.colour_enhance ? "1" : "0";
     v.blur_unknown = v.blur_unknown ? "1" : "0"; v.save_snapshots = v.save_snapshots ? "1" : "0"; v.sighting_clips = v.sighting_clips ? "1" : "0";
-    try { await put("/api/settings", v); toast("Settings saved"); } catch (e) { fail(e); }
+    try { await put("/api/settings", v); toast("Settings saved"); loadUsage(); } catch (e) { fail(e); }
   } }, "Save settings")) : h("p", { class: "hint" }, "Only an admin can change these settings.");
 
   const section = (title, ...kids) => h("section", { class: "panel", style: { marginBottom: "16px" } }, h("div", { class: "panel-head" }, h("h2", {}, title)), h("div", { class: "panel-body stack" }, ...kids));
@@ -1273,9 +1366,8 @@ async function settings(el) {
   el.append(head("Settings", null),
     section("Maps and mouse", h("p", { class: "muted", style: { margin: 0 } }, "Choose which mouse button moves the map (Overview, Find a person, Campus builder and 3D Map Studio). The middle button (wheel) always moves the map too."), mouse),
     section("Recognition", rec),
-    section("Privacy", priv, admin ? h("div", { class: "row" }, h("button", { onclick: async () => {
-      const r = await post("/api/maintenance/purge"); toast(`${r.deleted} old sightings deleted`);
-    } }, "Delete old sightings now")) : null),
+    section("Privacy", priv),
+    section("Data and storage", data),
     section("Video recordings and clips", video),
     section("Colour for black-and-white (night) video", colourOpts),
     saveRow,

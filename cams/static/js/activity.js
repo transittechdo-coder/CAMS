@@ -1,4 +1,4 @@
-// Activity AI screens: a person's day timeline, the daily report with "Ask CAMS",
+// Activity AI screens: a person's day timeline, the daily report,
 // and the Activity & routines page (routines, teaching the AI, place-and-time rules).
 import { h, get, post, put, del, icon, toast, fail, dialog, confirmBox, field, formValues, CATEGORIES, PLURAL, cap, snapUrl } from "./util.js";
 import { state, can, go } from "./app.js";
@@ -90,7 +90,7 @@ export function personDayPanel(p) {
   return panel;
 }
 
-// ===================================================================== daily report + Ask CAMS
+// ===================================================================== daily report
 export async function report(el) {
   let day = today();
   const figs = h("div", { class: "figures" });
@@ -102,38 +102,14 @@ export async function report(el) {
   [catSel, grpSel, allBox].forEach((x) => x.addEventListener("change", load));
   const qs = () => `day=${day}&category=${encodeURIComponent(catSel.value)}&group=${encodeURIComponent(grpSel.value)}&all=${allBox.checked}`;
 
-  // Ask CAMS
-  const q = h("input", { type: "search", placeholder: "Ask anything, e.g. Who missed lunch today?", "aria-label": "Question", class: "ask-input" });
-  const answer = h("div", { class: "ask-answer hidden", "aria-live": "polite" });
-  async function ask(text) {
-    if (!text.trim()) return;
-    q.value = text;
-    answer.classList.remove("hidden");
-    answer.replaceChildren(h("p", { class: "muted" }, "Thinking..."));
-    try {
-      const r = await post("/api/ask", { question: text });
-      answer.replaceChildren(...keep(
-        h("p", { class: "ask-text" }, r.answer),
-        r.items?.length ? h("ul", { class: "ask-items" }, r.items.map((it) => h("li", {},
-          h("button", { class: "ghost name", onclick: () => go("person", it.person_id) }, it.name), " ", h("span", { class: "muted" }, it.detail)))) : null,
-        r.examples ? h("div", { class: "chips" }, r.examples.map((x) => h("button", { class: "small", onclick: () => ask(x) }, x))) : null));
-    } catch (e) { answer.replaceChildren(h("p", { class: "error-text" }, e.message)); }
-  }
-  q.addEventListener("keydown", (e) => { if (e.key === "Enter") ask(q.value); });
-  const examples = ["Who missed lunch today?", "Who was late today?", "Who was in the library this afternoon?", "Who was using a phone today?", "Who was not seen today?"];
-
   el.append(
     h("div", { class: "page-head" }, h("div", { class: "grow" }, h("h1", {}, "Daily report"),
-      h("p", {}, "What each person did, routines they kept or missed, and changes from their usual pattern. Written by CAMS from what the cameras saw.")),
+      h("p", {}, "Who was seen, where and when, and the routines they kept or missed. Kept short so it opens fast.")),
       h("button", { onclick: () => window.print() }, "Print"),
       h("button", { onclick: () => { location.href = `/api/report/daily.csv?${qs()}`; } }, "Download CSV")),
-    h("section", { class: "panel ask" }, h("div", { class: "panel-body stack" },
-      h("div", { class: "row" }, h("span", { class: "ask-ic" }, icon("search")), q, h("button", { class: "primary", onclick: () => ask(q.value) }, "Ask CAMS")),
-      h("div", { class: "chips" }, examples.map((x) => h("button", { class: "small ghost", onclick: () => ask(x) }, x))),
-      answer)),
     h("div", { class: "row report-filters" }, dayPicker(day, (d) => { day = d; load(); }), catSel, grpSel,
       h("label", { class: "check" }, allBox, "Include people not seen"),
-      can("operator") ? h("button", { class: "small", title: "Check routines that have ended and write the summary and change notes now", onclick: async (e) => {
+      can("operator") ? h("button", { class: "small", title: "Check routines that have ended and write the day summaries now", onclick: async (e) => {
         e.currentTarget.disabled = true;
         try { const r = await post(`/api/report/daily/summaries?day=${day}`); toast(`Notes written for ${r.people} people`); load(); } catch (x) { fail(x); }
         e.currentTarget.disabled = false;
@@ -153,19 +129,18 @@ export async function report(el) {
       return;
     }
     table.replaceChildren(h("section", { class: "panel" }, h("table", { class: "list report-table" },
-      h("thead", {}, h("tr", {}, ["Person", "First seen", "Last seen", "Where", "Doing", "Routines", "Notes"].map((t) => h("th", {}, t)))),
+      h("thead", {}, h("tr", {}, ["Person", "First seen", "Last seen", "Where", "Routines", "Notes"].map((t) => h("th", {}, t)))),
       h("tbody", {}, r.people.map((p) => h("tr", {},
         h("td", {}, h("button", { class: "ghost name", onclick: () => go("person", p.person_id) }, p.name), h("div", { class: "faint" }, [cap(p.category), p.group].filter(Boolean).join(", "))),
-        h("td", { class: "num" }, p.first_seen ? hm(p.first_seen) : "–"),
-        h("td", { class: "num" }, p.last_seen ? hm(p.last_seen) : "–"),
+        h("td", { class: "num" }, p.first_seen ? hm(p.first_seen) : "–", p.first_place ? h("div", { class: "faint" }, p.first_place) : null),
+        h("td", { class: "num" }, p.last_seen ? hm(p.last_seen) : "–", p.last_place ? h("div", { class: "faint" }, p.last_place) : null),
         h("td", {}, p.places.map((x) => h("div", {}, `${x.place || "camera"} `, h("span", { class: "faint" }, mins(x.minutes * 60))))),
-        h("td", {}, p.activities.map((x) => h("div", {}, `${x.label} `, h("span", { class: "faint" }, mins(x.minutes * 60))))),
         h("td", {}, h("div", { class: "row", style: { gap: "4px" } },
           p.attended ? h("span", { class: "tag teal" }, `${p.attended} on time`) : null,
           p.late ? h("span", { class: "tag amber" }, `${p.late} late`) : null,
           p.missed ? h("span", { class: "tag red" }, `${p.missed} missed`) : null,
           p.out_of_place ? h("span", { class: "tag red" }, `${p.out_of_place} out of place`) : null)),
-        h("td", { class: "report-notes" }, p.notes.length ? p.notes.map((n) => h("div", {}, n)) : h("span", { class: "faint" }, p.summary))))))));
+        h("td", { class: "report-notes" }, p.notes.length ? p.notes.map((n) => h("div", {}, n)) : h("span", { class: "faint" }, p.first_seen ? "Nothing unusual." : "Not seen by any camera."))))))));
   }
   load();
 }
