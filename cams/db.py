@@ -248,6 +248,14 @@ CREATE TABLE IF NOT EXISTS recordings (
 CREATE INDEX IF NOT EXISTS idx_rec_camera_time ON recordings(camera_id, start_ts);
 CREATE INDEX IF NOT EXISTS idx_rec_kind_time ON recordings(kind, start_ts);
 
+-- Times CAMS was not running (power cuts, PC turned off) ------------------------
+CREATE TABLE IF NOT EXISTS downtime (
+    id       INTEGER PRIMARY KEY,
+    start_ts REAL NOT NULL,
+    end_ts   REAL NOT NULL,
+    reason   TEXT NOT NULL DEFAULT 'unexpected'     -- unexpected | closed
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL

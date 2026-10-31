@@ -40,7 +40,7 @@ LicenseFile=..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "autostart"; Description: "Start CAMS when this PC starts (recommended for the security office)"; GroupDescription: "Startup:"; Flags: unchecked
+Name: "autostart"; Description: "Start CAMS when this PC starts (recommended for the security office)"; GroupDescription: "Startup:"
 
 [Files]
 Source: "..\dist\CAMS\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

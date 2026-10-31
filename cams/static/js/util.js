@@ -91,6 +91,11 @@ export const ICONS = {
   copy: svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'),
   star: svg('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>'),
   mouse: svg('<rect x="6" y="3" width="12" height="18" rx="6"/><path d="M12 3v6M6 9h12"/>'),
+  health: svg('<path d="M3 12h4l2-5 4 10 2-5h6"/>'),
+  visitor: svg('<rect x="4" y="3" width="16" height="18" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M8 17c.7-1.8 2.2-2.8 4-2.8s3.3 1 4 2.8M10 3v2h4V3"/>'),
+  car: svg('<path d="M4 16V12l2-5h12l2 5v4z"/><path d="M4 12h16"/><circle cx="7.5" cy="16.5" r="1.5"/><circle cx="16.5" cy="16.5" r="1.5"/>'),
+  phone: svg('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>'),
+  bag: svg('<rect x="5" y="8" width="14" height="13" rx="2"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
 };
 
 export const POSE_ICON = {
