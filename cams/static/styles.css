@@ -622,3 +622,17 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .em-ok { background: #b3140f; color: #fff; border-color: #b3140f; font-weight: 700; }
 .em-foot { margin: 0; max-width: none; padding: 12px 20px; background: #fbeeed; color: #5b1410; font-size: 14px; }
 @media (max-width: 700px) { .em-item { grid-template-columns: 1fr; } .em-head h1 { font-size: 22px; } }
+
+/* ---------------------------------------------------------------- 1.6: visitors, vehicles, health */
+.plain-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.visitor-list li { align-items: center; }
+.visitor-list li.over { background: var(--red-soft); }
+.thumb.ph { display: inline-block; background: var(--line-2); }
+.plate { display: inline-block; font: 700 15px/1 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .08em;
+  padding: 5px 8px; border: 2px solid #1b1b1b; border-radius: 4px; background: #f5d90a; color: #111; white-space: nowrap; }
+.plate.white { background: #fff; }
+.plate-crop { height: 34px; border-radius: 3px; background: #222; }
+.qr svg { display: block; background: #fff; padding: 6px; border-radius: 6px; }
+.banner.amber { background: var(--amber-soft); color: var(--ink); }
+.feed.plate-list li { grid-template-columns: 130px 1fr auto; }
+.visitor-list li { grid-template-columns: 40px 1fr auto; }

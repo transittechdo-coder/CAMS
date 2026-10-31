@@ -10,6 +10,7 @@ guard should look at:
 * crowding      - N or more people together for a while
 * running       - someone moves much faster than walking pace
 * tampering     - the camera is covered, blurred or turned away
+* bag left      - a backpack, handbag or suitcase stays in one place with nobody near it
 
 These are *signals for a human to check*, not judgements about intent.
 """
@@ -45,7 +46,13 @@ DEFAULT_ANALYTICS = {
     "smoke": True,
     "person_down": True,
     "down_seconds": 20,      # someone lying still this long = alert (sooner after a fall)
+    "unattended_minutes": 0, # a bag left alone this long = alert; 0 = off
+    "plates": False,         # read number plates (gate cameras)
+    "plates_alert_unknown": False,   # alert for any plate not on the known list
 }
+
+BAG_CLASSES = {24: "backpack", 26: "handbag", 28: "suitcase"}
+BAG_FORGET_S = 20            # a bag not seen for this long is forgotten (someone took it)
 
 ALERT_COOLDOWN = 300         # seconds between two alerts of the same kind on one camera
 
@@ -263,6 +270,62 @@ class Tracker:
         return [self.tracks[i] for i in used]
 
 
+# ====================================================================== bags left behind
+class UnattendedCheck:
+    """Bags (backpack, handbag, suitcase) that stay in one place with nobody near them."""
+
+    def __init__(self):
+        self.bags: list[dict] = []
+        self.next_id = 1
+
+    @staticmethod
+    def _near(bag, people) -> bool:
+        bx, by, bw, bh = bag[:4]
+        for p in people or []:
+            px, py, pw, ph = p[:4]
+            mx, my = max(pw, ph * 0.6), ph * 0.25          # about an arm's reach around the person
+            if bx < px + pw + mx and bx + bw > px - mx and by < py + ph + my and by + bh > py - my:
+                return True
+        return False
+
+    def update(self, objects, people, ts: float, minutes: float) -> list[dict]:
+        found = [o for o in (objects or []) if len(o) > 5 and o[5] in BAG_CLASSES]
+        used: set[int] = set()
+        for o in found:
+            box = tuple(int(v) for v in o[:4])
+            cx, cy = box[0] + box[2] / 2, box[1] + box[3] / 2
+            best = None
+            for b in self.bags:
+                if b["id"] in used:
+                    continue
+                d = math.hypot(cx - b["cx"], cy - b["cy"]) / max(8, b["box"][2], b["box"][3])
+                if d < 0.6 and (best is None or d < best[0]):
+                    best = (d, b)
+            if best is None:
+                b = {"id": self.next_id, "box": box, "cx": cx, "cy": cy, "kind": BAG_CLASSES[o[5]],
+                     "first": ts, "seen": ts, "alone_since": None, "alerted": False}
+                self.next_id += 1
+                self.bags.append(b)
+            else:
+                b = best[1]
+                b["box"], b["seen"] = box, ts
+            used.add(b["id"])
+            if self._near(box, people):
+                b["alone_since"] = None
+                b["alerted"] = False
+            elif b["alone_since"] is None:
+                b["alone_since"] = ts
+        self.bags = [b for b in self.bags if ts - b["seen"] <= BAG_FORGET_S]
+        out = []
+        if minutes <= 0:
+            return out
+        for b in self.bags:
+            if b["alone_since"] is not None and not b["alerted"] and ts - b["alone_since"] >= minutes * 60:
+                b["alerted"] = True
+                out.append(b)
+        return out
+
+
 # ====================================================================== tamper
 class TamperCheck:
     """Notices when a camera is covered, defocused or turned away."""
@@ -308,9 +371,11 @@ class ActivityMonitor:
     def __init__(self):
         self.tracker = Tracker()
         self.tamper = TamperCheck()
+        self.bags = UnattendedCheck()
         self.last_alert: dict[str, float] = {}
         self.crowd_since: float | None = None
         self.people: list[tuple] = []
+        self.bag_box = None
 
     def _ready(self, kind: str, ts: float) -> bool:
         if ts - self.last_alert.get(kind, 0) < ALERT_COOLDOWN:
@@ -318,7 +383,7 @@ class ActivityMonitor:
         self.last_alert[kind] = ts
         return True
 
-    def analyse(self, frame, ts: float, people: list[tuple], rules: dict, closed_hours: str, cam_name: str):
+    def analyse(self, frame, ts: float, people: list[tuple], rules: dict, closed_hours: str, cam_name: str, objects=None):
         events: list[tuple[str, str]] = []
         self.people = people
         tracks = self.tracker.update(people, ts) if people is not None else []
@@ -349,6 +414,14 @@ class ActivityMonitor:
                     events.append(("crowd", f"{n} people gathered at {cam_name}"))
             else:
                 self.crowd_since = None
+
+        um = float(rules.get("unattended_minutes") or 0)
+        if um > 0:
+            for b in self.bags.update(objects, people, ts, um):
+                if self._ready(f"bag-{b['id']}", ts):
+                    mins = int((ts - b["alone_since"]) // 60)
+                    self.bag_box = b["box"]
+                    events.append(("bag_left", f"A {b['kind']} has been left alone at {cam_name} for {mins} minute{'s' if mins != 1 else ''}. Check it."))
 
         if rules.get("running"):
             for t in tracks:

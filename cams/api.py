@@ -9,8 +9,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re
 import shutil
+import socket
 import time
 import uuid
 import zipfile
@@ -234,6 +236,32 @@ def _camera_public(sysm: CamsSystem, cam: dict) -> dict:
     return out
 
 
+def _lan_addresses() -> list[str]:
+    """This computer's addresses on the local network (Wi-Fi, cable), most likely first."""
+    found: list[str] = []
+    try:
+        import psutil
+        for name, addrs in psutil.net_if_addrs().items():
+            for a in addrs:
+                if a.family == socket.AF_INET and not a.address.startswith(("127.", "169.254.")):
+                    found.append(a.address)
+    except Exception:
+        pass
+    try:                                    # the address used to reach other networks
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+            if not ip.startswith("127."):
+                found.insert(0, ip)
+    except OSError:
+        pass
+    private = lambda ip: ip.startswith(("192.168.", "10.")) or (ip.startswith("172.") and 16 <= int(ip.split(".")[1]) <= 31)
+    out = []
+    for ip in sorted(dict.fromkeys(found), key=lambda ip: (not private(ip), found.index(ip))):
+        out.append(ip)
+    return out[:4]
+
+
 def _last_seen(sysm: CamsSystem, pid: int) -> dict | None:
     row = sysm.db.one(
         "SELECT s.*, c.map_x, c.map_y, c.floor, c.building_id, b.name AS building_name "
@@ -323,9 +351,11 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         }
 
     @app.post("/api/setup")
-    def setup(body: SetupIn, response: Response):
+    def setup(body: SetupIn, response: Response, request: Request):
         if auth.has_users(db):
             raise HTTPException(409, "CAMS is already set up.")
+        if request.client and request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            raise HTTPException(403, "Set up CAMS on the computer it is installed on.")
         err = auth.validate_password(body.password)
         if err:
             raise HTTPException(400, err)
@@ -337,13 +367,22 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         db.audit(body.username, "setup", {"site": body.site_name})
         return {"ok": True}
 
+    failed: dict[str, list[float]] = {}
+
     @app.post("/api/login")
-    def login(body: LoginIn, response: Response):
+    def login(body: LoginIn, response: Response, request: Request):
+        ip = request.client.host if request.client else "?"
+        now = time.time()
+        recent = [t for t in failed.get(ip, []) if now - t < 300]
+        if len(recent) >= 8:      # phones on the network can also try: stop password guessing
+            raise HTTPException(429, "Too many wrong passwords. Wait 5 minutes and try again.")
         token = auth.login(db, body.username, body.password)
         if not token:
+            failed[ip] = recent + [now]
             time.sleep(0.8)  # slow down password guessing
-            db.audit(body.username, "login_failed")
+            db.audit(body.username, "login_failed", {"from": ip})
             raise HTTPException(401, "Wrong username or password.")
+        failed.pop(ip, None)
         response.set_cookie(COOKIE, token, httponly=True, samesite="strict", max_age=auth.SESSION_SECONDS)
         db.audit(body.username, "login")
         return {"ok": True}
@@ -1399,7 +1438,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
                 "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
                 "recording_max_gb", "colour_enhance", "colour_refresh", "speed_mode", "route_hours", "alert_days",
-                "min_free_gb", "tiles_max_mb", "emergency_sensitivity", "alarm_sound"}
+                "min_free_gb", "tiles_max_mb", "emergency_sensitivity", "alarm_sound", "visitor_days", "vehicle_days",
+                "lan_access"}
     PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
     @app.get("/api/settings")
@@ -1423,6 +1463,12 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Activity AI must be on or off.")
             if "retention_days" in values and not 0 <= int(values["retention_days"]) <= 3650:
                 raise HTTPException(400, "Keep the activity timeline for 1 to 3650 days (0 = keep).")
+            if "visitor_days" in values and not 0 <= int(values["visitor_days"]) <= 3650:
+                raise HTTPException(400, "Keep the visitor log for 1 to 3650 days (0 = keep).")
+            if "vehicle_days" in values and not 0 <= int(values["vehicle_days"]) <= 3650:
+                raise HTTPException(400, "Keep the vehicle log for 1 to 3650 days (0 = keep).")
+            if "lan_access" in values and str(values["lan_access"]) not in ("0", "1"):
+                raise HTTPException(400, "Phone access must be on or off.")
             if "alert_days" in values and not 0 <= int(values["alert_days"]) <= 3650:
                 raise HTTPException(400, "Keep alerts for 1 to 3650 days (0 = keep).")
             if "route_hours" in values and not 0 <= float(values["route_hours"]) <= 24 * 3650:
@@ -1489,9 +1535,117 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         db.audit(user["username"], "data_delete", out)
         return {"deleted": out}
 
+    # ------------------------------------------------------------ visitors
+    @app.get("/api/visitors")
+    def list_visitors(inside: bool = False, days: float = 1, user=viewer):
+        return sysm.visitors.listing(inside, time.time() - days * 86400)
+
+    @app.get("/api/visitors/hosts")
+    def visitor_hosts(user=operator):
+        return db.query("SELECT id, full_name, group_name FROM people WHERE active = 1 AND category IN ('staff', 'contractor') ORDER BY full_name")
+
+    @app.post("/api/visitors")
+    def check_in_visitor(body: dict, user=operator):
+        try:
+            v = sysm.visitors.check_in(body, user["username"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        db.audit(user["username"], "visitor_in", {"visit": v["id"], "name": v["full_name"]})
+        return v
+
+    @app.post("/api/visitors/{vid}/checkout")
+    def check_out_visitor(vid: int, user=operator):
+        try:
+            v = sysm.visitors.check_out(vid, user["username"])
+        except LookupError as exc:
+            raise HTTPException(404, str(exc))
+        db.audit(user["username"], "visitor_out", {"visit": vid})
+        return v
+
+    @app.post("/api/visitors/{vid}/extend")
+    def extend_visitor(vid: int, body: dict, user=operator):
+        try:
+            return sysm.visitors.extend(vid, float(body.get("until") or 0))
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc) or "Choose a time.")
+
+    @app.get("/api/visitors/{vid}/photo")
+    def visitor_photo(vid: int, user=viewer):
+        v = db.one("SELECT v.photo_path, p.photo_path AS live FROM visits v LEFT JOIN people p ON p.id = v.person_id WHERE v.id = ?", (vid,))
+        return FileResponse(_enrol_file(v and (v["live"] or v["photo_path"])))
+
+    # ------------------------------------------------------------ vehicles (number plates)
+    from .plates import clean as plate_clean, pretty as plate_pretty
+
+    @app.get("/api/vehicles")
+    def vehicle_log(days: float = 1, q: str = "", camera_id: int = 0, user=viewer):
+        sql = ("SELECT v.*, l.kind AS list_kind, l.owner, l.note, l.plate AS list_plate FROM vehicle_log v "
+               "LEFT JOIN plates_list l ON l.id = v.list_id WHERE v.last_seen >= ?")
+        args: list = [time.time() - days * 86400]
+        if q.strip():
+            sql += " AND (v.plate LIKE ? OR l.owner LIKE ?)"
+            args += [f"%{plate_clean(q)}%", f"%{q.strip()}%"]
+        if camera_id:
+            sql += " AND v.camera_id = ?"
+            args.append(camera_id)
+        rows = db.query(sql + " ORDER BY v.last_seen DESC LIMIT 1000", args)
+        for r in rows:
+            r["shown"] = plate_pretty(r["plate"])
+        return {"rows": rows, "ai": sysm.plates.available,
+                "cameras": db.query("SELECT id, name FROM cameras WHERE analytics LIKE '%\"plates\": true%' ORDER BY name")}
+
+    @app.get("/api/plates")
+    def plate_list(user=viewer):
+        rows = db.query("SELECT * FROM plates_list ORDER BY kind DESC, plate")
+        for r in rows:
+            r["shown"] = plate_pretty(r["plate"])
+        return rows
+
+    def _plate_body(body: dict) -> tuple:
+        plate = plate_clean(body.get("plate", ""))
+        if len(plate) < 3:
+            raise HTTPException(400, "Type the number plate, e.g. T 123 ABC.")
+        kind = body.get("kind") or "known"
+        if kind not in ("known", "flagged"):
+            raise HTTPException(400, "Choose known or flagged.")
+        return plate, kind, (body.get("owner") or "").strip()[:120], (body.get("note") or "").strip()[:300]
+
+    @app.post("/api/plates")
+    def add_plate(body: dict, user=operator):
+        plate, kind, owner, note = _plate_body(body)
+        db.execute("INSERT INTO plates_list(plate, kind, owner, note, created_at) VALUES (?,?,?,?,?) "
+                   "ON CONFLICT(plate) DO UPDATE SET kind = excluded.kind, owner = excluded.owner, note = excluded.note",
+                   (plate, kind, owner, note, time.time()))
+        sysm.plates.reload_list()
+        db.audit(user["username"], "plate_list", {"plate": plate, "kind": kind})
+        return {"ok": True, "plate": plate, "shown": plate_pretty(plate)}
+
+    @app.delete("/api/plates/{lid}")
+    def delete_plate(lid: int, user=operator):
+        db.execute("UPDATE vehicle_log SET list_id = NULL WHERE list_id = ?", (lid,))
+        db.execute("DELETE FROM plates_list WHERE id = ?", (lid,))
+        sysm.plates.reload_list()
+        return {"ok": True}
+
+    # ------------------------------------------------------------ system health
+    @app.get("/api/health")
+    def health(user=operator):
+        return sysm.health.report()
+
+    @app.put("/api/health/autostart")
+    def health_autostart(body: dict, user=admin):
+        from .health import set_autostart
+        try:
+            out = set_autostart(bool(body.get("on")))
+        except RuntimeError as exc:
+            raise HTTPException(400, str(exc))
+        db.audit(user["username"], "autostart", {"on": out["on"]})
+        return out
+
     @app.get("/api/backup")
     def backup(user=admin):
         """Zip of the database, enrolment photos and map (snapshots excluded)."""
+        db.set_settings({"last_backup": time.time()})
         buf = io.BytesIO()
         tmp = paths.data / "backup_tmp.db"
         with db.conn() as src:
@@ -1768,6 +1922,25 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return response
 
     app.mount("/static", StaticFiles(directory=static), name="static")
+
+    @app.get("/guard")
+    def guard_page():
+        return FileResponse(static / "guard.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/api/network")
+    def network(request: Request, user=admin):
+        """Addresses phones can use to open the guard view, with a QR code for each."""
+        import segno
+
+        port = request.url.port or 8765
+        bound = os.environ.get("CAMS_BIND", "127.0.0.1")
+        on = db.get_setting("lan_access") == "1"
+        out = []
+        for ip in _lan_addresses():
+            url = f"http://{ip}:{port}/guard"
+            out.append({"ip": ip, "url": url, "qr": segno.make(url, error="m").svg_inline(scale=5, dark="#10202b")})
+        return {"on": on, "listening": bound == "0.0.0.0", "restart_needed": on != (bound == "0.0.0.0"),
+                "port": port, "addresses": out}
 
     @app.get("/")
     def index():

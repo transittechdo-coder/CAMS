@@ -20,7 +20,7 @@ a = Analysis(
     hiddenimports=[
         "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
         "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "multipart",
-        "webview.platforms.edgechromium", "webview.platforms.winforms",
+        "webview.platforms.edgechromium", "webview.platforms.winforms", "psutil", "segno",
     ],
     excludes=["matplotlib", "pytest", "IPython"],
     noarchive=False,

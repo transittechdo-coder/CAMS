@@ -63,6 +63,11 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
 | **Restricted areas** | Per building or zone: only some people may enter (by type, class or name), or some may not, and closed hours. |
 | **Unusual situations** | A person-detection AI flags loitering, crowds, running, people present during closed hours, and cameras that are covered, blurred or turned away. |
 | **Emergencies** | Every camera watches for **fire** (flickering flames, also on black-and-white night cameras), **heavy smoke** and a **person down** (someone lying on the ground after fainting or a fall). Every CAMS window turns red with a siren and the picture until someone presses *I'm handling it*, and the CAMS PC beeps. Works offline, no extra downloads. An early warning, not a replacement for smoke detectors. |
+| **Visitors** | Check visitors in at the gate (name, phone, who they visit, how long), take their face photo, print a pass. Every camera recognises them; alerts when they go where they may not or stay too long. Their face is forgotten at check-out. |
+| **Number plates** | Gate cameras read plates (T 123 ABC, MC 123 ABC...) offline. Vehicle log with time and plate picture; known plates (staff, buses) and flagged plates (alert when seen); optional alert for any unknown vehicle. |
+| **Guard view on phones** | Guards open CAMS on their phones over the site's Wi-Fi (scan a QR code): alerts, the red emergency screen with siren, cameras, visitors inside, find a person. Nothing goes over the internet. |
+| **Power cuts** | Starts with Windows, notes how long it was off after a power cut (gap in the recordings), warns when running on battery or UPS. **System health** page: every camera, disk, AI, power and computer load. |
+| **Bag left behind** | Alert when a backpack, handbag or suitcase stays alone for a set time (per camera). |
 | **Alerts** | Rule breaks, watch-list people, strangers on restricted cameras, unusual situations and offline cameras, each with a picture. |
 | **Privacy** | Strangers are blurred, consent is recorded, old records delete themselves, one button erases a person, roles and an activity log. Nothing leaves the PC. |
 
@@ -179,10 +184,12 @@ Microsoft Edge WebView2; if that is missing, CAMS opens Edge or Chrome in app mo
 face pictures with sightings, and the map picture. Sightings and their pictures are deleted
 automatically after the number of days set in Settings (30 by default).
 
-**The models** (bundled in the installer, about 43 MB in total) come from the
+**The models** (bundled in the installer, about 59 MB in total) come from the
 [OpenCV model zoo](https://github.com/opencv/opencv_zoo): YuNet (face detection), SFace (face
-recognition) and NanoDet-Plus (person detection, trained on COCO). They run on the processor
-through OpenCV, with no graphics card.
+recognition), NanoDet-Plus (person and object detection, trained on COCO) and MediaPipe Pose. Number
+plates use a YOLOv9-tiny plate finder from [open-image-models](https://github.com/ankandrew/open-image-models)
+and the CCT-XS plate reader from [fast-plate-ocr](https://github.com/ankandrew/fast-plate-ocr) (both MIT).
+They run on the processor through OpenCV 5, with no graphics card.
 
 ---
 
@@ -227,7 +234,7 @@ Without Inno Setup it still makes the desktop icon and opens CAMS from `dist\CAM
 
 ```bash
 pip install -r requirements-dev.txt
-python scripts/download_models.py   # once, 43 MB
+python scripts/download_models.py   # once, 59 MB (needs: pip install onnx)
 python -m pytest -q                 # automated tests
 python -m cams                      # opens the CAMS window
 python -m cams --no-window          # server only: open http://127.0.0.1:8765

@@ -277,6 +277,60 @@ sounds again.
 - These are early warnings from cameras and can be wrong both ways. Keep smoke detectors, fire
   alarms and a first-aid plan. Tanzania emergency numbers: **114** fire and rescue, **112** general.
 
+## Visitors
+
+Open **Visitors → Check in a visitor**. Type the name, phone, who they are visiting, the reason and
+how long they stay (and, if your site asks, an ID or badge number). You can tick the only places they
+may go (for example only the Administration block). Then take their face photo with the webcam, a
+camera or a photo. Tell the visitor that cameras follow them while they are inside.
+
+- The visitor is recognised on every camera, and **Track** shows their route like anyone else's.
+- **Alerts:** a visitor seen outside their places, and a visitor still inside after the time they
+  said they would leave (with where they were last seen). **More time** extends the visit.
+- **Pass** prints a visitor pass with photo, host and time.
+- **Check out** when they leave: CAMS deletes their face print at once and stops recognising them.
+  The visit stays in the **Visitor log** for 30 days (Settings → Data and storage), then it is deleted.
+
+## Vehicles (number plates)
+
+For a gate camera, open **Cameras → Activity rules** and tick **Read number plates**. Every vehicle
+that comes in or out is listed in **Vehicles** with the time, the camera and a picture of the plate.
+
+- Mark a plate **Known** (staff car, school bus, delivery van, with the owner's name) or **Flag** it to
+  get an alert whenever it comes. **Alert for any vehicle that is not on the known list** suits gates
+  where only known cars may enter.
+- Point the camera at the plates, not from too high; plates should be at least about 20 pixels tall
+  in the picture. Night vision (infrared) helps after dark.
+- The reader can mistake similar characters (0 and O, 8 and B); CAMS matches those to your list
+  anyway. Always check the plate picture before acting.
+
+## Guard view on phones
+
+In **Settings → Phones**, tick **Let phones and other computers on this network open CAMS** and restart
+CAMS. A QR code appears: guards connect their phone to the same Wi-Fi, scan it, and sign in with their
+own CAMS account. The guard view shows alerts (with the red emergency screen, siren and vibration),
+the cameras, visitors inside (with Check out) and Find a person. Add it to the home screen and keep it
+open: the phone can only sound while the page is open. If phones cannot connect, allow CAMS through the
+Windows firewall for Private networks. Nothing goes over the internet.
+
+## Power cuts and System health
+
+- **Start CAMS when this computer turns on** (System health page, and ticked in the installer). Also set
+  the computer to turn on by itself when power returns: in the BIOS / UEFI this is called *Restore on AC
+  power loss* or *AC back: Power on*. A UPS keeps CAMS and the cameras running through short cuts.
+- After a power cut, CAMS writes an alert saying how long it was off: there are no recordings for that
+  time. All the gaps are listed on the **System health** page.
+- On a laptop, or a PC with a UPS that tells Windows its battery level, CAMS alerts when power goes off,
+  when the battery is almost empty, and when power is back.
+- **System health** shows each camera (working, how many pictures a second, offline for how long), the
+  disk, the AI models, the computer's load and when the last backup was made.
+
+## Bag left behind
+
+In **Cameras → Activity rules**, set **Bag left behind** to a number of minutes (try 3 for gates,
+halls and corridors). CAMS alerts when a backpack, handbag or suitcase stays that long with nobody near
+it, with a picture of the bag marked. Leave it at 0 for classrooms, where bags stay all day.
+
 ## 7. Settings (admin)
 
 - **Match strictness:** if CAMS confuses two people, move it right; if it misses people, move it left.

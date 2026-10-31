@@ -237,19 +237,34 @@ def main(argv: list[str] | None = None) -> int:
         _splash(close=True)
 
 
+def _lan_setting(paths) -> bool:
+    """Settings -> Phones: "Let phones on this network open CAMS" (read before the server starts)."""
+    import sqlite3
+
+    try:
+        with sqlite3.connect(paths.db_file, timeout=5) as c:
+            row = c.execute("SELECT value FROM settings WHERE key = 'lan_access'").fetchone()
+        return bool(row and row[0] == "1")
+    except Exception:
+        return False
+
+
 def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="cams", description=APP_FULL_NAME)
     ap.add_argument("--no-window", action="store_true", help="run the server only")
     ap.add_argument("--lan", action="store_true", help="listen on all network interfaces")
+    ap.add_argument("--startup", action="store_true", help="started by Windows when the PC turned on")
     ap.add_argument("--port", type=int, default=SERVER_PORT)
     ap.add_argument("--check-window", action="store_true",
                     help="open the window, confirm the screens load, close it and report (used by the build checks)")
     ap.add_argument("--version", action="version", version=f"CAMS {__version__}")
     args = ap.parse_args(argv)
 
-    host = "0.0.0.0" if args.lan or os.environ.get("CAMS_LAN") == "1" else SERVER_HOST
     paths = get_paths()
     paths.ensure()
+    lan = args.lan or os.environ.get("CAMS_LAN") == "1" or _lan_setting(paths)
+    host = "0.0.0.0" if lan else SERVER_HOST
+    os.environ["CAMS_BIND"] = host            # the Settings page shows whether phones can connect
     run_file = paths.data / "running.json"
 
     # CAMS already open? Show another window for it instead of starting twice.

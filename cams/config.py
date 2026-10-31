@@ -114,6 +114,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "alert_days": "30",
     # Activity timeline, routine results and daily notes.
     "retention_days": "30",
+    # Visitor log (checked-out visitors, their photo and route).
+    "visitor_days": "30",
     # Blur faces of people who are not enrolled in live view and snapshots.
     "blur_unknown": "1",
     # Save a small face snapshot with each sighting.
@@ -122,6 +124,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # and whether this PC sounds an alarm when one happens.
     "emergency_sensitivity": "normal",
     "alarm_sound": "1",
+    # Let phones and other computers on this network open CAMS (guard view). Needs a restart.
+    "lan_access": "0",
+    # Vehicle log (number plates read at gates).
+    "vehicle_days": "30",
     # Face AI speed: auto (fast on PCs with 4 or fewer cores) | fast | balanced | detailed.
     "speed_mode": "auto",
     # Number of recognition worker threads (0 = automatic).

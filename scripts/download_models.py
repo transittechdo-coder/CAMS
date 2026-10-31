@@ -1,4 +1,5 @@
-"""Download the AI models CAMS needs: face detection, face recognition, person and object detection, and body pose (about 49 MB, once).
+"""Download the AI models CAMS needs: face detection, face recognition, person and object detection, body pose
+and number plates (about 59 MB, once).
 
     python scripts/download_models.py
 
@@ -33,7 +34,21 @@ MODELS = {
         f"{BASE}/object_detection_nanodet/object_detection_nanodet_2022nov.onnx",
         "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186",
     ),
+    # number plates: reader (CCT-XS v1, fast-plate-ocr project, MIT licence)
+    "plate_reader_cct_xs_v1.onnx": (
+        "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/cct_xs_v1_global.onnx",
+        "c1ae2ae031b10f8ab7ed6e3cdaf8d9c753477e299dbad3579c8f705a7d882134",
+    ),
 }
+
+# number plates: finder (YOLOv9-tiny, open-image-models project, MIT licence). Its built-in
+# duplicate-removal step fails in OpenCV, so it is cut off here and CAMS does that step itself.
+PLATE_FINDER = (
+    "https://github.com/ankandrew/open-image-models/releases/download/assets/yolo-v9-t-384-license-plates-end2end.onnx",
+    "888397b96d761c89db40bc9c305838e8652660f5e282c2cadebbe8d2951a77a8",
+    "plate_detector_yolov9t_384.onnx",
+    "/end2end/Transpose_output_0",
+)
 
 
 def sha256(path: Path) -> str:
@@ -61,6 +76,27 @@ def main() -> int:
             print(f"ERROR: checksum mismatch for {name} ({got})", file=sys.stderr)
             return 1
         tmp.replace(dest)
+        print(f"ok       {name}")
+    url, digest, name, cut_at = PLATE_FINDER
+    dest = target / name
+    if dest.exists():
+        print(f"ok       {name}")
+    else:
+        print(f"download {name} ...", flush=True)
+        raw = target / "plate_finder_end2end.part"
+        urllib.request.urlretrieve(url, raw)
+        if sha256(raw) != digest:
+            raw.unlink(missing_ok=True)
+            print(f"ERROR: checksum mismatch for {name}", file=sys.stderr)
+            return 1
+        try:
+            import onnx.utils
+        except ImportError:
+            raw.unlink(missing_ok=True)
+            print("ERROR: the onnx package is needed once to prepare the plate finder: pip install onnx", file=sys.stderr)
+            return 1
+        onnx.utils.extract_model(str(raw), str(dest), ["images"], [cut_at])
+        raw.unlink(missing_ok=True)
         print(f"ok       {name}")
     print(f"Models ready in {target}")
     return 0

@@ -34,6 +34,9 @@ from .face_engine import DETECT_WIDTHS, FaceEngine, Gallery, ModelsMissing, blur
 from .colour import ColourFilter
 from .colour import draw_tag as draw_colour_tag
 from .geo import TileCache
+from .health import Health
+from .visitors import Visitors
+from .plates import Plates
 from .recorder import Recorder
 
 log = logging.getLogger("cams")
@@ -88,9 +91,16 @@ class CamsSystem:
         self.recorder = Recorder(self)
         self.tiles = TileCache(paths.tiles)
         self.colour = ColourFilter(self)
+        self.health = Health(self)
+        self.visitors = Visitors(self)
+        self.plates = Plates(self)
 
     # ================================================================ lifecycle
     def start(self) -> None:
+        try:
+            self.health.on_start()
+        except Exception:
+            log.exception("Could not check for a power cut")
         if self.models_ok:
             n = self.worker_count()
             for i in range(n):
@@ -109,7 +119,13 @@ class CamsSystem:
             self.recorder.sync_continuous()
 
     def stop(self) -> None:
+        if self._stop.is_set():
+            return
         self._stop.set()
+        try:
+            self.health.on_stop()
+        except Exception:
+            pass
         self.colour.stop()
         self.recorder.stop_all()
         try:
@@ -205,6 +221,9 @@ class CamsSystem:
 
     def access_problem(self, cam_id: int, person: dict | None, now=None) -> str | None:
         """Explain why this person should not be here right now, or None if allowed."""
+        v = self.visitors.access_problem(person, self.camera_areas.get(cam_id, []))
+        if v:
+            return v
         for a in self.camera_areas.get(cam_id, []):
             mode = a.get("access_mode") or "everyone"
             listed = bool(person) and (
@@ -363,17 +382,21 @@ class CamsSystem:
         detector = getattr(engine, "person_detector", None)
         watch = self.behaviour is not None and self.setting("activity_ai") != "0"
         objects: list = []
-        if detector and (rules.get("people", True) or watch or rules.get("person_down", True)):
-            people, objects = detector.detect_scene(frame, objects=watch or bool(rules.get("person_down", True)))
+        if detector and (rules.get("people", True) or watch or rules.get("person_down", True)
+                         or float(rules.get("unattended_minutes") or 0) > 0):
+            want_objects = watch or bool(rules.get("person_down", True)) or float(rules.get("unattended_minutes") or 0) > 0
+            people, objects = detector.detect_scene(frame, objects=want_objects)
         else:
             people = []
         self.stats["people_detected"] += len(people)
         mon = self.monitors.setdefault(worker.id, ActivityMonitor())
         closed = next((a["closed_hours"] for a in self.camera_areas.get(worker.id, []) if a.get("closed_hours")), "")
-        for kind, msg in mon.analyse(frame, ts, people, rules, closed, worker.state.name):
-            snap = self._save_frame(frame, faces)
+        for kind, msg in mon.analyse(frame, ts, people, rules, closed, worker.state.name, objects=objects):
+            snap = self._save_frame(frame, faces, marks=[mon.bag_box] if kind == "bag_left" else None)
             self._alert(kind, msg, None, worker.id, None, snap)
         self._check_emergencies(worker, frame, ts, mon, people, objects, rules, faces)
+        if rules.get("plates") and self.plates.available:
+            self.plates.observe(worker.id, worker.state.name, frame, ts, rules)
         overlays = []
         for f in faces:
             pid, sim = self.gallery.match(f.embedding, threshold)
@@ -705,6 +728,12 @@ class CamsSystem:
         days = self.fsetting("retention_days", 30)
         if days > 0:
             self.delete_activity(now - days * 86400)
+        days = self.fsetting("visitor_days", 30)
+        if days > 0:
+            self.visitors.purge(now - days * 86400)
+        days = self.fsetting("vehicle_days", 30)
+        if days > 0:
+            self.plates.purge(now - days * 86400)
         try:
             self.recorder.purge()
         except Exception:
@@ -716,7 +745,7 @@ class CamsSystem:
         self._tidy()
         return n
 
-    DATA_KINDS = ("routes", "alerts", "activity", "recordings", "map_cache")
+    DATA_KINDS = ("routes", "alerts", "activity", "recordings", "map_cache", "visitors", "vehicles")
 
     def delete_now(self, kinds) -> dict:
         """The Delete now buttons in Settings."""
@@ -730,6 +759,10 @@ class CamsSystem:
             out["activity"] = self.delete_activity(later)
         if "recordings" in kinds:
             out["recordings"] = self.recorder.delete_recordings()
+        if "visitors" in kinds:
+            out["visitors"] = self.visitors.purge(later)
+        if "vehicles" in kinds and getattr(self, "plates", None):
+            out["vehicles"] = self.plates.purge(later)
         if "map_cache" in kinds:
             self.tiles.clear()
             out["map_cache"] = 1
@@ -764,6 +797,8 @@ class CamsSystem:
             "activity": {"bytes": 0, "count": count("SELECT COUNT(*) AS n FROM activity_log")},
             "recordings": {"bytes": recs, "count": count("SELECT COUNT(*) AS n FROM recordings WHERE kind != 'clip'")},
             "map_cache": {"bytes": self.tiles.size_bytes(), "count": 0},
+            "visitors": {"bytes": 0, "count": count("SELECT COUNT(*) AS n FROM visits")},
+            "vehicles": {"bytes": 0, "count": count("SELECT COUNT(*) AS n FROM vehicle_log")},
             "database": {"bytes": dbf},
             "people": {"bytes": folder(self.paths.enrollments), "count": count("SELECT COUNT(*) AS n FROM people")},
             "disk_free": free, "disk_total": disk,
@@ -774,12 +809,20 @@ class CamsSystem:
         last_routines = 0.0
         while not self._stop.wait(10):
             now = time.time()
+            try:
+                self.health.tick(now)
+            except Exception:
+                log.exception("Health check failed")
             if now - last_routines >= 55:
                 last_routines = now
                 try:
                     self.insights.run_due()
                 except Exception:
                     log.exception("Routine check failed")
+                try:
+                    self.visitors.check_overstays(now)
+                except Exception:
+                    log.exception("Visitor check failed")
             for w in list(self.cameras.values()):
                 st = w.state
                 if st.status == "offline" and st.offline_since and not st.offline_alerted \

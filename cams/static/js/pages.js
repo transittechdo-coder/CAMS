@@ -10,6 +10,7 @@ import { openEnrol, POSES, POSE_LABEL } from "./enrol.js";
 import { state, can, go } from "./app.js";
 import { startTour, GUIDE } from "./tour.js";
 import { personDayPanel, report, activityPage, refreshActivityStatus } from "./activity.js";
+import { health, visitors, vehicles } from "./more.js";
 
 function head(title, sub, ...actions) {
   return h("div", { class: "page-head" },
@@ -606,6 +607,11 @@ function activityDialog(cam, after) {
     h("div", { class: "row" }, h("input", { type: "time", name: "from", value: from || "18:00" }), "and", h("input", { type: "time", name: "to", value: to || "06:00" })),
     h("p", { class: "hint", style: { margin: 0 } }, "Closed hours can also be set for a whole building in the Campus builder."),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "tamper", checked: a.tamper !== false }), "Alert when the camera is covered, blurred or turned away"),
+    field("Bag left behind: alert when a bag is alone for (minutes)", h("input", { name: "unattended_minutes", type: "number", min: 0, max: 240, value: a.unattended_minutes || 0, style: { maxWidth: "140px" } }),
+      "0 = off. Try 3 for gates, halls and corridors. Backpacks, handbags and suitcases with nobody near them."),
+    h("h3", { style: { margin: "10px 0 0" } }, "Number plates"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "plates", checked: !!a.plates }), "Read number plates (gate cameras): log every vehicle in Vehicles"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "plates_alert_unknown", checked: !!a.plates_alert_unknown }), "Alert for any vehicle that is not on the known list"),
     h("h3", { style: { margin: "10px 0 0" } }, "Emergencies"),
     h("p", { class: "hint", style: { margin: 0 } }, "These cover the whole screen in red with an alarm until someone answers. Turn fire off for a kitchen camera that sees cooking fires."),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "fire", checked: a.fire !== false }), "Fire: flickering flames"),
@@ -620,6 +626,7 @@ function activityDialog(cam, after) {
       people: v.people, loiter_minutes: +v.loiter_minutes || 0, crowd_count: +v.crowd_count || 0, running: v.running,
       after_hours: v.after_on ? `${v.from}-${v.to}` : "", tamper: v.tamper,
       fire: v.fire, smoke: v.smoke, person_down: v.person_down, down_seconds: +v.down_seconds || 20,
+      unattended_minutes: +v.unattended_minutes || 0, plates: v.plates, plates_alert_unknown: v.plates_alert_unknown,
     });
     toast("Activity rules saved"); after();
   } }] });
@@ -630,6 +637,8 @@ function ruleTags(a) {
   const t = [];
   const em = [a.fire !== false && "fire", a.smoke !== false && "smoke", a.person_down !== false && "person down"].filter(Boolean);
   if (em.length) t.push(em.join(" · "));
+  if (a.plates) t.push("plates");
+  if (a.unattended_minutes) t.push(`bags ${a.unattended_minutes} min`);
   if (a.people === false) return t;
   if (a.loiter_minutes) t.push(`loiter ${a.loiter_minutes} min`);
   if (a.crowd_count) t.push(`crowd ${a.crowd_count}+`);
@@ -1200,6 +1209,8 @@ async function alerts(el) {
     camera_offline: ["Camera offline", ""], tamper: ["Camera tampering", "red"], after_hours: ["After hours", "amber"],
     loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"], running: ["Running", "amber"],
     fire: ["FIRE", "red"], smoke: ["Heavy smoke", "red"], person_down: ["Person down", "red"], emergency_test: ["Alarm test", ""],
+    bag_left: ["Bag left", "amber"], visitor_overstay: ["Visitor overstay", "amber"], plate_flagged: ["Flagged vehicle", "red"],
+    plate_unknown: ["Unknown vehicle", "amber"], downtime: ["CAMS was off", "amber"], power: ["Power", "amber"],
   };
   const big = (src) => dialog({ title: "Alert picture", wide: true, body: h("img", { src, alt: "Alert picture", style: { width: "100%", borderRadius: "6px" } }) });
   async function load() {
@@ -1267,6 +1278,28 @@ async function settings(el) {
       try { await post("/api/alerts/test-emergency"); toast("Test alarm sent to every CAMS window"); } catch (e) { fail(e); }
     } }, icon("alerts"), "Test the alarm")) : null);
 
+  // ---- phones: the guard view over the site's Wi-Fi
+  const phones = h("div", { class: "stack" });
+  async function drawPhones() {
+    if (!admin) { phones.replaceChildren(h("p", { class: "hint" }, "Ask an admin to turn on phone access.")); return; }
+    const n = await get("/api/network");
+    const box = h("input", { type: "checkbox", checked: n.on });
+    box.addEventListener("change", async () => {
+      try { await put("/api/settings", { lan_access: box.checked ? "1" : "0" }); toast(box.checked ? "Phone access on: restart CAMS to start it." : "Phone access off: restart CAMS to stop it."); drawPhones(); }
+      catch (e) { box.checked = !box.checked; fail(e); }
+    });
+    phones.replaceChildren(...[
+      h("p", { class: "muted", style: { margin: 0 } }, "Guards can open CAMS on their phones over this site's Wi-Fi: alerts with the red emergency screen and siren, cameras, visitors inside, and find a person. They sign in with their own CAMS account. Nothing goes over the internet."),
+      h("label", { class: "check" }, box, "Let phones and other computers on this network open CAMS"),
+      n.restart_needed ? h("div", { class: "banner amber" }, n.on ? "Close CAMS and open it again to let phones in." : "Close CAMS and open it again to stop phone access.") : null,
+      n.on && n.listening && n.addresses.length ? h("div", { class: "row", style: { flexWrap: "wrap", gap: "20px", alignItems: "flex-start" } }, n.addresses.map((a) => h("div", { class: "stack", style: { alignItems: "center" } },
+        h("div", { class: "qr", html: a.qr, role: "img", "aria-label": `QR code for ${a.url}` }),
+        h("b", { class: "num" }, a.url), h("button", { class: "small", style: { alignSelf: "center" }, onclick: () => copyText(a.url, "Address copied") }, icon("copy"), "Copy")))) : null,
+      n.on && n.listening ? h("p", { class: "hint", style: { margin: 0 } }, "On the phone, connect to the same Wi-Fi, scan the code with the camera, and add the page to the home screen. Keep the page open on the guard's phone: emergencies sound only while it is open. If phones cannot connect, allow CAMS through the Windows firewall (Windows asks the first time; choose Private networks).") : null,
+    ].filter(Boolean));
+  }
+  drawPhones().catch(() => {});
+
   // ---- data and storage: what CAMS deletes by itself, and when
   const keepSel = (name, unit, opts) => {
     const cur = String(s[name] ?? "");
@@ -1284,6 +1317,8 @@ async function settings(el) {
     ["alerts", "Alerts", "Alerts and their pictures.", keepSel("alert_days", "d", [1, 7, 30, 90, 365, 0])],
     ["activity", "Activity timeline and notes", "What people were doing, routine results and daily notes.", keepSel("retention_days", "d", [1, 7, 30, 90, 365, 0])],
     ["recordings", "Camera recordings", "Videos recorded with Record or Record all the time. Videos marked Keep stay.", keepSel("recording_days", "d", [1, 3, 7, 14, 30, 90, 0])],
+    ["visitors", "Visitor log", "Visitors who checked out, with their photo and route. Their face print is deleted at check-out.", keepSel("visitor_days", "d", [1, 7, 30, 90, 365, 0])],
+    ["vehicles", "Vehicle log", "Number plates read at gates, with a small picture of each plate.", keepSel("vehicle_days", "d", [1, 7, 30, 90, 365, 0])],
     ["map_cache", "Saved satellite map", "Only the parts of the map you look at are downloaded and saved, up to this size.", keepSel("tiles_max_mb", "mb", [100, 300, 1000, 5000])],
   ];
   const dataRows = KINDS.map(([k, label, hint, sel]) => {
@@ -1394,6 +1429,7 @@ async function settings(el) {
     section("Maps and mouse", h("p", { class: "muted", style: { margin: 0 } }, "Choose which mouse button moves the map (Overview, Find a person, Campus builder and 3D Map Studio). The middle button (wheel) always moves the map too."), mouse),
     section("Recognition", rec),
     section("Emergencies: fire, smoke, person down", emerg),
+    section("Phones: guard view over Wi-Fi", phones),
     section("Privacy", priv),
     section("Data and storage", data),
     section("Video recordings and clips", video),
@@ -1464,4 +1500,4 @@ async function guide(el) {
     h("div", { class: "panel-body" }, g.text.map((t) => h("p", {}, t)))))));
 }
 
-export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide, report, activity: activityPage, recordings };
+export const PAGES = { overview, live, find, people, person, cameras, builder, alerts, settings, guide, report, activity: activityPage, recordings, health, visitors, vehicles };
