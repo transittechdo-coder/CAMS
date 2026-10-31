@@ -261,7 +261,13 @@ function showEmergencies(list) {
                 e.currentTarget.disabled = true;
                 try { await post(`/api/alerts/${a.id}/ack`); } catch (x) { fail(x); }
                 pollAlerts(true);
-              } }, a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"))));
+              } }, a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
+              a.kind !== "emergency_test" ? h("button", { title: "Nothing is wrong: CAMS learns from this and will not ring for the same thing on this camera again", onclick: async (e) => {
+                if (!confirm("Wrong alarm? CAMS will remember this picture and not ring for the same thing on this camera again.")) return;
+                e.currentTarget.disabled = true;
+                try { await post(`/api/alerts/${a.id}/wrong`); toast("Thank you: CAMS learned from this wrong alarm"); } catch (x) { fail(x); }
+                pollAlerts(true);
+              } }, "Wrong alarm") : null)));
       })),
       h("p", { class: "em-foot" }, "Check the camera and send help or call the emergency services (Tanzania: 114 fire and rescue, 112 general). CAMS can be wrong: it is a warning, not a fire alarm.")));
   }

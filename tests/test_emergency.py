@@ -149,7 +149,7 @@ def test_fall_is_reported_sooner():
     tr = tracks_for(lambda t: STAND if t < 5 else LIE)
     hits = run([(i * 0.5, bg) for i in range(60)], tracks=tr)
     downs = [t for t, k in hits if k == "person_down"]
-    assert downs and downs[0] <= 14
+    assert downs and 16 <= downs[0] <= 19            # 12 seconds after the fall
 
 
 def test_standing_sitting_or_lying_on_a_bed_is_fine():
@@ -198,3 +198,133 @@ def test_emergency_alert_reaches_the_app(admin, system):
     for x in em:
         admin.post(f"/api/alerts/{x['id']}/ack")
     assert admin.get("/api/alerts/emergencies").json() == []
+
+
+# ------------------------------------------------------------------ the trained second opinion (1.8)
+class FakeAI:
+    """Stands in for the trained fire / smoke checker."""
+    def __init__(self, fire=0.0, smoke=0.0):
+        self.p = np.array([[1 - fire - smoke, fire, smoke]], np.float32)
+        self.calls = 0
+
+    def features(self, crops):
+        self.calls += 1
+        return np.ones((len(crops), 1280), np.float32)
+
+    def probs(self, feats):
+        return np.repeat(self.p, len(feats), axis=0)
+
+
+def run_ai(frames, ai, rules=RULES, sens="normal"):
+    from cams.emergency import EmergencyMonitor
+    em = EmergencyMonitor()
+    out = []
+    for ts, img in frames:
+        out += [(ts, k) for k, _, _ in em.analyse(img, ts, None, [], [], rules, "Store room", sens, ai=ai)]
+    return out, em
+
+
+def test_fire_needs_the_ai_to_agree():
+    bg = scene()
+    frames = [(i * 0.5, flame(bg.copy(), 320, 300, 40, i * 0.5)) for i in range(16)]
+    hits, em = run_ai(frames, FakeAI(fire=0.02))            # the AI sees no fire: no alarm
+    assert not any(k == "fire" for _, k in hits) and em.vetoed["fire"] >= 1
+    hits, em = run_ai(frames, FakeAI(fire=0.9))             # the AI agrees: alarm
+    assert any(k == "fire" for _, k in hits)
+    assert em.last_info["fire"]["score"] >= 0.89
+
+
+def test_smoke_needs_the_ai_to_agree():
+    hits, _ = run_ai(smoke_frames(scene()), FakeAI(smoke=0.1))
+    assert not any(k == "smoke" for _, k in hits)
+    hits, _ = run_ai(smoke_frames(scene()), FakeAI(smoke=0.95))
+    assert any(k == "smoke" for _, k in hits)
+
+
+def test_ai_is_only_asked_when_the_rules_see_something():
+    ai = FakeAI()
+    run_ai([(i * 0.5, scene()) for i in range(20)], ai)
+    assert ai.calls == 0
+
+
+def test_real_ai_model_loads_and_scores():
+    from cams.config import get_paths
+    from cams.emergency import FireSmokeAI
+    paths = get_paths()
+    if not FireSmokeAI.available(paths.models):
+        import pytest
+        pytest.skip("MobileNetV2 not downloaded")
+    ai = FireSmokeAI(paths.models)
+    p = ai.probs(ai.features([scene(), np.full((200, 200, 3), 128, np.uint8)]))
+    assert p.shape == (2, 3) and np.allclose(p.sum(1), 1, atol=1e-4)
+    assert p[:, 1:].max() < 0.5                              # a corridor and a grey wall are not fire
+
+
+# ------------------------------------------------------------------ person down: stricter (1.8)
+def test_person_at_the_edge_or_unsure_is_not_down():
+    bg = scene()
+    edge = (0, 250, 180, 60)                                 # cut off by the left edge of the picture
+    assert not run([(i * 0.5, bg) for i in range(80)], tracks=tracks_for(lambda t: edge))
+    t = tracks_for(lambda t: LIE)
+
+    def unsure(ts):
+        out = t(ts)
+        for tr in out:
+            tr.score = 0.3                                   # the person finder is not sure it is a person
+        return out
+    assert not run([(i * 0.5, bg) for i in range(80)], tracks=unsure)
+
+
+def test_pose_unsure_does_not_count_as_down():
+    bg = scene()
+    hits = run([(i * 0.5, bg) for i in range(80)], tracks=tracks_for(lambda t: LIE), tilt=lambda t: None)
+    assert not hits                                           # pose AI installed but cannot see the body
+
+
+def test_lying_on_a_bench_or_on_the_sports_field():
+    from cams.emergency import EmergencyMonitor
+    bg = scene()
+    bench = (230, 240, 200, 80, 0.8, 13)
+    assert not run([(i * 0.5, bg) for i in range(80)], tracks=tracks_for(lambda t: LIE), objects=[bench])
+    em = EmergencyMonitor()
+    tr = tracks_for(lambda t: LIE)
+    hits = []
+    for i in range(160):                                     # 80 seconds on a sports field
+        ts = i * 0.5
+        hits += [ts for k, _, _ in em.analyse(bg, ts, tr(ts), [LIE], [], RULES, "Field", field_place=True) if k == "person_down"]
+    assert hits and 59 <= hits[0] <= 62                       # 3 x 20 seconds
+
+
+def test_wrong_alarm_is_remembered(admin, system):
+    cam = admin.post("/api/cameras", json={"name": "Kitchen", "source": "0", "kind": "usb"}).json()["id"]
+
+    class W:
+        id = cam
+
+        class state:
+            name = "Kitchen"
+
+    from cams.activity import ActivityMonitor
+    feat = np.random.default_rng(3).normal(size=1280).astype(np.float32)
+
+    class SameAI(FakeAI):
+        def features(self, crops):
+            return np.repeat(feat[None], len(crops), axis=0)
+    system.fire_ai = lambda: SameAI(fire=0.95)
+    bg = scene()
+
+    def burn(t0):
+        mon = ActivityMonitor()
+        system.emergency.pop(cam, None)
+        for i in range(16):
+            system._check_emergencies(W, flame(bg.copy(), 320, 300, 40, i * 0.5), t0 + i * 0.5, mon, [], [], parse_analytics(None), [])
+        return [a for a in admin.get("/api/alerts").json() if a["kind"] == "fire" and not a["acknowledged"]]
+    first = burn(1000)
+    assert len(first) == 1
+    r = admin.post(f"/api/alerts/{first[0]['id']}/wrong").json()
+    assert r["learned"]
+    assert admin.get("/api/alerts/emergencies").json() == []
+    assert burn(5000) == []                                    # same picture again: no alarm
+    # something different on the same camera still rings
+    feat[:] = np.random.default_rng(9).normal(size=1280)
+    assert len(burn(9000)) == 1

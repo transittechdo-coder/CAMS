@@ -248,6 +248,19 @@ CREATE TABLE IF NOT EXISTS recordings (
 CREATE INDEX IF NOT EXISTS idx_rec_camera_time ON recordings(camera_id, start_ts);
 CREATE INDEX IF NOT EXISTS idx_rec_kind_time ON recordings(kind, start_ts);
 
+-- What the emergency AI saw for each fire / smoke / person-down alarm; "wrong" ones are not alarmed again
+CREATE TABLE IF NOT EXISTS emergency_examples (
+    id         INTEGER PRIMARY KEY,
+    alert_id   INTEGER,
+    camera_id  INTEGER,
+    kind       TEXT NOT NULL,
+    feature    BLOB NOT NULL,                 -- 1280 picture numbers (MobileNetV2)
+    ai_score   REAL NOT NULL DEFAULT 0,
+    wrong      INTEGER NOT NULL DEFAULT 0,    -- 1 = a guard pressed "Wrong alarm"
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_emex_cam ON emergency_examples(camera_id, kind, wrong);
+
 -- Times CAMS was not running (power cuts, PC turned off) ------------------------
 CREATE TABLE IF NOT EXISTS downtime (
     id       INTEGER PRIMARY KEY,
@@ -320,6 +333,7 @@ class Database:
         },
         "alerts": {
             "snapshot_path": "TEXT",
+            "wrong": "INTEGER NOT NULL DEFAULT 0",     # 1 = marked "Wrong alarm"
         },
     }
 

@@ -107,6 +107,7 @@ class Cams(private val context: Context) {
     fun emergencies(): JSONArray = JSONArray(call("/api/alerts/emergencies"))
     fun openAlerts(): JSONArray = JSONArray(call("/api/alerts?open_only=true&limit=20"))
     fun ack(id: Long) { call("/api/alerts/$id/ack", "POST") }
+    fun wrong(id: Long) { call("/api/alerts/$id/wrong", "POST") }
 
     fun picture(path: String): ByteArray? = try {
         val b = base ?: find()

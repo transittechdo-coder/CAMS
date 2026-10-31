@@ -13,7 +13,7 @@ models/*.onnx
 *.db
 *.db-wal
 *.db-shm
-data/
+/data/
 snapshots/
 enrollments/
 

@@ -24,7 +24,7 @@ import numpy as np
 import json
 
 from .activity import ActivityMonitor, PersonDetector, in_hours, parse_analytics
-from .emergency import EmergencyMonitor
+from .emergency import FORGET_SIMILAR, EmergencyMonitor, FireSmokeAI
 from .behaviour import BehaviourEngine
 from .insights import Insights
 from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
@@ -80,6 +80,10 @@ class CamsSystem:
         self.activity_ok = PersonDetector.available(paths.models)
         self.monitors: dict[int, ActivityMonitor] = {}
         self.emergency: dict[int, EmergencyMonitor] = {}
+        self._fire_ai = threading.local()
+        self.fire_ai_ok = FireSmokeAI.available(paths.models)
+        self._wrong: dict[tuple[int, str], np.ndarray] = {}      # (camera, kind) -> pictures of wrong alarms
+        self._wrong_lock = threading.Lock()
         self._alarm_at = 0.0
         self.camera_areas: dict[int, list[dict]] = {}
         self.camera_rules: dict[int, dict] = {}
@@ -431,23 +435,84 @@ class CamsSystem:
         if not any(rules.get(k, True) for k in EMERGENCIES):
             return
         em = self.emergency.setdefault(worker.id, EmergencyMonitor())
-        sleeping = any((a.get("purpose") or "") == "dormitory" for a in self.camera_areas.get(worker.id, []))
+        areas = self.camera_areas.get(worker.id, [])
+        sleeping = any((a.get("purpose") or "") == "dormitory" for a in areas)
+        field = bool(areas) and all(a.get("kind") == "field" for a in areas)
         tracks = list(mon.tracker.tracks.values()) if people is not None else None
+        pose_ok = bool(self.behaviour and self.behaviour.pose_ok)
         try:
             events = em.analyse(frame, ts, tracks, people, objects, rules, worker.state.name,
                                 self.setting("emergency_sensitivity") or "normal",
-                                tilt_of=lambda t: self._body_tilt(frame, t, ts), sleeping_place=sleeping)
+                                tilt_of=lambda t: self._body_tilt(frame, t, ts), sleeping_place=sleeping,
+                                ai=self.fire_ai(), pose_ok=pose_ok, field_place=field)
         except Exception:
             log.exception("Emergency check failed on camera %s", worker.id)
             return
         for kind, msg, box in events:
+            info = em.last_info.get(kind) or {}
+            feat = info.get("feature")
+            if feat is not None and self._looks_like_wrong_alarm(worker.id, kind, feat):
+                log.info("Emergency %s on camera %s not raised: looks like a picture marked Wrong alarm", kind, worker.id)
+                continue
             if not mon._ready(kind, ts):
                 continue
-            place = ", ".join(a["name"] for a in self.camera_areas.get(worker.id, [])[:1])
+            place = ", ".join(a["name"] for a in areas[:1])
             if place:
                 msg = msg.replace(f"at {worker.state.name}", f"at {worker.state.name} ({place})", 1)
             snap = self._save_frame(frame, faces, marks=[box])
-            self._alert(kind, msg, None, worker.id, None, snap)
+            aid = self._alert(kind, msg, None, worker.id, None, snap)
+            if feat is not None:
+                self.db.execute("INSERT INTO emergency_examples(alert_id, camera_id, kind, feature, ai_score, created_at) "
+                                "VALUES (?,?,?,?,?,?)", (aid, worker.id, kind, np.asarray(feat, np.float32).tobytes(),
+                                                         float(info.get("score", info.get("ai", 0)) or 0), time.time()))
+
+    def fire_ai(self) -> FireSmokeAI | None:
+        """The fire / smoke second opinion for this worker thread (None if the model is missing)."""
+        if not self.fire_ai_ok:
+            return None
+        ai = getattr(self._fire_ai, "ai", None)
+        if ai is None:
+            try:
+                ai = self._fire_ai.ai = FireSmokeAI(self.paths.models)
+            except Exception as exc:
+                log.error("Fire / smoke AI could not load: %s", exc)
+                self.fire_ai_ok = False
+                return None
+        return ai
+
+    # -------------------------------------------------------------- wrong alarms
+    def _wrong_pictures(self, cam_id: int, kind: str) -> np.ndarray:
+        key = (cam_id, kind)
+        with self._wrong_lock:
+            m = self._wrong.get(key)
+            if m is None:
+                rows = self.db.query("SELECT feature FROM emergency_examples WHERE camera_id = ? AND kind = ? AND wrong = 1 "
+                                     "ORDER BY id DESC LIMIT 300", (cam_id, kind))
+                if rows:
+                    m = np.stack([np.frombuffer(r["feature"], np.float32) for r in rows])
+                    m = m / np.maximum(np.linalg.norm(m, axis=1, keepdims=True), 1e-6)
+                else:
+                    m = np.zeros((0, 1280), np.float32)
+                self._wrong[key] = m
+            return m
+
+    def _looks_like_wrong_alarm(self, cam_id: int, kind: str, feat) -> bool:
+        m = self._wrong_pictures(cam_id, kind)
+        if not len(m):
+            return False
+        f = np.asarray(feat, np.float32)
+        f = f / max(float(np.linalg.norm(f)), 1e-6)
+        return float((m @ f).max()) >= FORGET_SIMILAR
+
+    def mark_wrong_alarm(self, alert_id: int) -> bool:
+        """The guard says this alarm was wrong: remember it for that camera, and close the alert."""
+        row = self.db.one("SELECT camera_id, kind FROM emergency_examples WHERE alert_id = ?", (alert_id,))
+        self.db.execute("UPDATE emergency_examples SET wrong = 1 WHERE alert_id = ?", (alert_id,))
+        self.db.execute("UPDATE alerts SET acknowledged = 1, wrong = 1 WHERE id = ?", (alert_id,))
+        if row:
+            with self._wrong_lock:
+                self._wrong.pop((row["camera_id"], row["kind"]), None)
+        return bool(row)
 
     def _body_tilt(self, frame, track, ts) -> float | None:
         """How much a person's body leans (0 = upright, 1 = flat), from the body pose AI.
@@ -560,8 +625,8 @@ class CamsSystem:
         cv2.imwrite(str(folder / name), crop, [cv2.IMWRITE_JPEG_QUALITY, 80])
         return f"{day}/{name}"
 
-    def _alert(self, kind: str, message: str, person_id, camera_id, sighting_id, snapshot: str | None = None) -> None:
-        self.db.execute(
+    def _alert(self, kind: str, message: str, person_id, camera_id, sighting_id, snapshot: str | None = None) -> int:
+        aid = self.db.execute(
             "INSERT INTO alerts(created_at, kind, message, person_id, camera_id, sighting_id, snapshot_path) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (time.time(), kind, message, person_id, camera_id, sighting_id, snapshot),
@@ -569,6 +634,7 @@ class CamsSystem:
         if kind in EMERGENCIES:
             log.warning("EMERGENCY %s: %s", kind, message)
             self.sound_alarm()
+        return aid
 
     def _save_frame(self, frame: np.ndarray, faces, marks=None) -> str | None:
         """Whole-scene picture for an activity alert, with strangers' faces blurred
@@ -689,6 +755,7 @@ class CamsSystem:
         self._unlink_snaps(r["snapshot_path"] for r in self.db.query(
             "SELECT snapshot_path FROM alerts WHERE created_at < ? AND snapshot_path IS NOT NULL", (before,))
             if r["snapshot_path"] not in used)
+        self.db.execute("DELETE FROM emergency_examples WHERE wrong = 0 AND created_at < ?", (before,))
         return self.db.execute("DELETE FROM alerts WHERE created_at < ?", (before,))
 
     def delete_activity(self, before: float) -> int:

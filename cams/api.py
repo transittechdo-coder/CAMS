@@ -1429,6 +1429,15 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         db.execute("UPDATE alerts SET acknowledged = 1 WHERE id = ?", (aid,))
         return {"ok": True}
 
+    @app.post("/api/alerts/{aid}/wrong")
+    def wrong_alarm(aid: int, user=viewer):
+        """Not a real emergency: close it, and teach that camera not to ring for the same picture again."""
+        if not db.one("SELECT id FROM alerts WHERE id = ?", (aid,)):
+            raise HTTPException(404, "Alert not found.")
+        learned = sysm.mark_wrong_alarm(aid)
+        db.audit(user["username"], "wrong_alarm", {"alert": aid})
+        return {"ok": True, "learned": learned}
+
     @app.post("/api/alerts/test-emergency")
     def test_emergency(user=admin):
         """Try the emergency warning: the red screen and the alarm on every CAMS window and this PC."""
