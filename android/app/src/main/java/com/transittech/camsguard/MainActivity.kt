@@ -54,6 +54,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // automatic tests on an emulator (debug build only): connect without the camera
+        val testQr = if (BuildConfig.DEBUG) intent?.getStringExtra("qr") else null
+        if (testQr != null && !cams.prefs.paired) {
+            intent.removeExtra("qr")
+            Thread { try { cams.pair(testQr); ui.post { WatchService.start(this); showMain() } } catch (e: Exception) { ui.post { showWelcome(e.message) } } }.start()
+            return
+        }
         if (!cams.prefs.paired) { showWelcome(); return }
         WatchService.start(this)
         if (web == null) showMain()

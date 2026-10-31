@@ -140,13 +140,13 @@ class WatchService : Service() {
     private fun otherAlerts() {
         val list = cams.openAlerts()
         val last = cams.prefs.lastAlertId
-        var newest = last
+        var newest = maxOf(last, 0L)
         var count = 0
         for (i in 0 until list.length()) {
             val a = list.getJSONObject(i)
             val id = a.getLong("id")
             if (id > newest) newest = id
-            if (id <= last || Kinds.isEmergency(a.optString("kind")) || last == 0L) continue
+            if (id <= last || Kinds.isEmergency(a.optString("kind")) || last < 0L) continue
             if (count++ >= 3) continue
             val n = NotificationCompat.Builder(this, CH_ALERTS)
                 .setSmallIcon(R.drawable.ic_notify)

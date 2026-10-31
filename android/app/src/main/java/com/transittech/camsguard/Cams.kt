@@ -23,7 +23,8 @@ class Prefs(context: Context) {
     var port: Int get() = p.getInt("port", 8765); set(v) = p.edit().putInt("port", v).apply()
     var site: String get() = p.getString("site", "") ?: ""; set(v) = p.edit().putString("site", v).apply()
     var guard: String get() = p.getString("guard", "") ?: ""; set(v) = p.edit().putString("guard", v).apply()
-    var lastAlertId: Long get() = p.getLong("last_alert", 0); set(v) = p.edit().putLong("last_alert", v).apply()
+    /** Newest alert already shown (-1 = not known yet: alerts older than this phone are not shown). */
+    var lastAlertId: Long get() = p.getLong("last_alert", -1); set(v) = p.edit().putLong("last_alert", v).apply()
 
     val paired: Boolean get() = !token.isNullOrBlank() && hosts.isNotEmpty()
 
