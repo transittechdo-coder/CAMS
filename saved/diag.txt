@@ -1,0 +1,18 @@
++ echo 'QR=http://10.0.2.2:8765/guard#pair=4ARNE7Z5&h=10.0.2.2&p=8765'
+QR=http://10.0.2.2:8765/guard#pair=4ARNE7Z5&h=10.0.2.2&p=8765
++ ss -ltnp
++ grep 8765
+LISTEN 0      2048              0.0.0.0:8765       0.0.0.0:*    users:(("python",pid=2814,fd=8))          
++ curl -s -m 5 http://127.0.0.1:8765/api/status
+{"app":"CAMS","name":"Camera AI Management System","version":"1.8.0","needs_setup":false,"models_ok":false,"activity_ai":{"objects":false,"pose":false},"site_name":"Mikocheni School","user":null,"onboarding_done":false,"map_mouse":"standard","ui_loads":0}+ echo
+
++ adb shell 'echo -e '\''GET /api/status HTTP/1.0\r\n\r\n'\'' | nc -w 5 10.0.2.2 8765'
++ tail -3
++ adb shell ping -c 2 10.0.2.2
+PING 10.0.2.2 (10.0.2.2) 56(84) bytes of data.
+64 bytes from 10.0.2.2: icmp_seq=1 ttl=255 time=1.12 ms
+64 bytes from 10.0.2.2: icmp_seq=2 ttl=255 time=1.22 ms
+
+--- 10.0.2.2 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 1001ms
+rtt min/avg/max/mdev = 1.125/1.173/1.222/0.059 ms

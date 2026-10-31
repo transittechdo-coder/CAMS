@@ -1,0 +1,3 @@
+2026-10-31 11:42:58,520 INFO cams: Starting CAMS 1.8.0, data in /home/runner/work/_temp/camsdata
+2026-10-31 11:42:59,225 WARNING cams: Face models missing in /home/runner/work/CAMS/CAMS/models - recognition disabled
+2026-10-31 11:44:55,107 WARNING cams: EMERGENCY emergency_test: TEST of the emergency alarm. Nothing is wrong: press I'm handling it to stop it.
