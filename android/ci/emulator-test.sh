@@ -37,7 +37,7 @@ adb shell dumpsys activity services $PKG | grep -q WatchService || { echo "::err
 curl -s -b /tmp/ck -X POST http://127.0.0.1:8765/api/alerts/test-emergency
 shot 3-alarm 10
 adb shell dumpsys activity activities | grep -q "AlarmActivity" || { echo "::error::alarm screen did not open"; fail=1; }
-adb shell dumpsys notification | grep -q "ALARM TEST" || { echo "::error::alarm notification missing"; }
+adb shell dumpsys notification --noredact | grep -q "ALARM TEST" || echo "::warning::alarm notification text not found"
 # press "Stop the test" through the API, as the guard would on another phone
 for id in $(curl -s -b /tmp/ck http://127.0.0.1:8765/api/alerts/emergencies | python3 -c "import sys,json;print(' '.join(str(a['id']) for a in json.load(sys.stdin)))"); do
   curl -s -b /tmp/ck -X POST http://127.0.0.1:8765/api/alerts/$id/ack; done
@@ -69,7 +69,7 @@ sleep 25
 adb shell cmd statusbar expand-notifications || true
 shot 6-notification 3
 adb shell cmd statusbar collapse || true
-adb shell dumpsys notification | grep -q "Visitor stayed too long" || { echo "::error::normal alert notification missing"; fail=1; }
+adb shell dumpsys notification --noredact | grep -q "Visitor stayed too long" || { echo "::error::normal alert notification missing"; fail=1; }
 
 # 6. the guard screens inside the app
 adb shell am start -W -n $PKG/.MainActivity

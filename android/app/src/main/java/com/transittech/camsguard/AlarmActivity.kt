@@ -75,7 +75,7 @@ class AlarmActivity : Activity() {
         }
         val pic = ImageView(this).apply { adjustViewBounds = true }
         card.addView(pic, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        val snap = a.optString("snapshot_path")
+        val snap = if (a.isNull("snapshot_path")) "" else a.optString("snapshot_path")
         if (snap.isNotBlank()) Thread {
             cams.picture(snap)?.let { bytes ->
                 val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -88,7 +88,7 @@ class AlarmActivity : Activity() {
             setTextColor(Color.parseColor("#B3140F")); setPadding(0, dp(10), 0, 0)
         })
         card.addView(TextView(this).apply { text = a.optString("message"); textSize = 18f; setTextColor(Color.parseColor("#1B1B1B")) })
-        val cam = a.optString("camera_name")
+        val cam = if (a.isNull("camera_name")) "" else a.optString("camera_name")
         val time = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date((a.optDouble("created_at") * 1000).toLong()))
         card.addView(TextView(this).apply { text = (if (cam.isNotBlank()) "Camera: $cam · " else "") + time; textSize = 15f; setTextColor(Color.GRAY) })
         val id = a.getLong("id")

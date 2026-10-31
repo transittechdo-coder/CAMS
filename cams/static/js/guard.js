@@ -107,7 +107,7 @@ async function start() {
   document.title = `CAMS Guard - ${st.site_name}`;
   app.replaceChildren(
     h("header", {}, h("b", {}, st.site_name, h("br"), h("small", {}, `${me.full_name || me.username} · CAMS Guard`)),
-      h("button", { onclick: async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); me = null; showLogin(); } }, "Sign out")),
+      IN_APP ? null : h("button", { onclick: async () => { await api("/api/logout", { method: "POST" }).catch(() => {}); me = null; showLogin(); } }, "Sign out")),
     main, nav);
   show(tab);
   timers.push(setInterval(pollEmergencies, 3000), setInterval(badge, 10000));

@@ -176,6 +176,9 @@ class MainActivity : AppCompatActivity() {
         web = w
         root.addView(w, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         setContentView(root)
+        s.text = "Connecting to ${cams.prefs.site.ifBlank { "CAMS" }}..."
+        s.setBackgroundColor(Color.parseColor("#6B7A86"))
+        Live.onChange = { ui.post { refreshStrip() } }
         loadGuard()
     }
 
