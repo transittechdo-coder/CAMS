@@ -29,7 +29,7 @@ from .insights import Insights
 from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
 from .config import Paths
 from .db import Database
-from .face_engine import FaceEngine, Gallery, ModelsMissing, blur_region, crop_face, models_present
+from .face_engine import DETECT_WIDTHS, FaceEngine, Gallery, ModelsMissing, blur_region, box_iou, crop_face, models_present
 from .colour import ColourFilter
 from .colour import draw_tag as draw_colour_tag
 from .geo import TileCache
@@ -39,6 +39,11 @@ log = logging.getLogger("cams")
 
 UNKNOWN_SAME_PERSON = 0.50     # two unknown face prints this close = same stranger
 UNKNOWN_MEMORY_SECONDS = 120
+# Speed-ups for the face AI
+REUSE_PRINT_S = 3.0            # a face that stays in the same place keeps its face print this long
+REUSE_IOU = 0.45               # ... if its box overlaps the earlier box this much
+STILL_DIFF = 2.5               # average change (0-255) below which a picture counts as "nothing moved"
+STILL_RECHECK_S = 5.0          # even when nothing moves, look again this often
 
 
 class CamsSystem:
@@ -54,6 +59,8 @@ class CamsSystem:
         self._queue: queue.Queue = queue.Queue(maxsize=8)
         self._pending: set[int] = set()
         self._last_analysis: dict[int, float] = {}
+        self._still: dict[int, np.ndarray] = {}         # tiny copy of the last analysed picture per camera
+        self._prints: dict[int, list[dict]] = {}        # recent face prints per camera, reused while a face stays put
         self._active: dict[tuple, dict] = {}            # open sightings
         self._unknown: dict[int, list[dict]] = {}       # per camera recent strangers
         self._rec_lock = threading.Lock()
@@ -117,6 +124,15 @@ class CamsSystem:
         if configured > 0:
             return configured
         return max(1, min(4, (os.cpu_count() or 2) - 1))
+
+    def speed_mode(self) -> str:
+        """fast | balanced | detailed. "auto" picks fast on PCs with 4 or fewer processor cores."""
+        import os
+
+        m = self.setting("speed_mode") or "auto"
+        if m not in DETECT_WIDTHS:
+            m = "fast" if (os.cpu_count() or 2) <= 4 else "balanced"
+        return m
 
     # ================================================================ settings
     def setting(self, key: str) -> str:
@@ -257,12 +273,56 @@ class CamsSystem:
         now = time.time()
         if worker.id in self._pending or now - self._last_analysis.get(worker.id, 0) < 1.0 / fps:
             return
+        if self._nothing_moved(worker, frame, now):
+            return
         try:
             self._queue.put_nowait((worker, frame.copy(), now))
             self._pending.add(worker.id)
             self._last_analysis[worker.id] = now
         except queue.Full:
             pass
+
+    def _nothing_moved(self, worker: CameraWorker, frame: np.ndarray, now: float) -> bool:
+        """True when the picture is the same as last time and nobody was in it: skip the AI.
+
+        Saves most of the work on cameras that look at an empty corridor. A picture is
+        still analysed every few seconds, and always while people or faces are in view."""
+        tiny = cv2.resize(frame, (64, 36), interpolation=cv2.INTER_AREA)
+        tiny = cv2.cvtColor(tiny, cv2.COLOR_BGR2GRAY) if tiny.ndim == 3 else tiny
+        prev = self._still.get(worker.id)
+        st = worker.state
+        empty = not st.overlays and not getattr(st, "people", None)
+        if prev is not None and empty and now - self._last_analysis.get(worker.id, 0) < STILL_RECHECK_S \
+                and float(cv2.absdiff(prev, tiny).mean()) < STILL_DIFF:
+            self.stats["frames_skipped"] = self.stats.get("frames_skipped", 0) + 1
+            return True
+        self._still[worker.id] = tiny
+        return False
+
+    def _face_prints(self, engine: FaceEngine, cam_id: int, frame: np.ndarray, faces: list, ts: float) -> None:
+        """Give every face its face print, reusing the last one for a face that has not moved.
+
+        Working out a face print is the slowest step of recognition; a person standing in
+        the same place for a few seconds does not need a new one every time."""
+        old = self._prints.get(cam_id, [])
+        used: set[int] = set()
+        new = []
+        for f in faces:
+            hit = None
+            for i, c in enumerate(old):
+                if i not in used and ts - c["at"] < REUSE_PRINT_S and box_iou(c["box"], f.box) >= REUSE_IOU:
+                    hit = i
+                    break
+            if hit is None:
+                engine.embed(frame, f)
+                new.append({"box": f.box, "emb": f.embedding, "q": f.quality, "at": ts})
+            else:
+                used.add(hit)
+                c = old[hit]
+                f.embedding, f.quality = c["emb"], c["q"]
+                new.append({**c, "box": f.box})
+                self.stats["prints_reused"] = self.stats.get("prints_reused", 0) + 1
+        self._prints[cam_id] = new
 
     # ================================================================ recognition
     def _recognition_loop(self) -> None:
@@ -292,7 +352,9 @@ class CamsSystem:
 
     def process_frame(self, engine: FaceEngine, worker: CameraWorker, frame: np.ndarray, ts: float) -> list[dict]:
         threshold = self.fsetting("match_threshold", 0.40)
-        faces = engine.analyse(frame)
+        engine.max_width = DETECT_WIDTHS[self.speed_mode()]
+        faces = engine.detect(frame)
+        self._face_prints(engine, worker.id, frame, faces, ts)
         rules = self.camera_rules.get(worker.id) or parse_analytics(None)
         detector = getattr(engine, "person_detector", None)
         watch = self.behaviour is not None and self.setting("activity_ai") != "0"
@@ -487,38 +549,149 @@ class CamsSystem:
         return frame
 
     # ================================================================ maintenance
+    def _unlink_snaps(self, rels) -> None:
+        for rel in rels:
+            if rel:
+                try:
+                    (self.paths.snapshots / rel).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def delete_routes(self, before: float) -> int:
+        """Forget where people were before this time: sightings, their face pictures and clips.
+
+        Alerts are kept for their own time: an alert that pointed at a deleted sighting
+        keeps the sighting's picture."""
+        old = "SELECT id FROM sightings WHERE last_seen < ?"
+        self.db.execute(
+            "UPDATE alerts SET snapshot_path = (SELECT s.snapshot_path FROM sightings s WHERE s.id = alerts.sighting_id) "
+            f"WHERE snapshot_path IS NULL AND sighting_id IN ({old})", (before,))
+        kept = {r["snapshot_path"] for r in self.db.query("SELECT snapshot_path FROM alerts WHERE snapshot_path IS NOT NULL")}
+        self.db.execute(f"UPDATE alerts SET sighting_id = NULL WHERE sighting_id IN ({old})", (before,))
+        self._unlink_snaps(r["snapshot_path"] for r in self.db.query(
+            "SELECT snapshot_path FROM sightings WHERE last_seen < ? AND snapshot_path IS NOT NULL", (before,))
+            if r["snapshot_path"] not in kept)
+        n = self.db.execute("DELETE FROM sightings WHERE last_seen < ?", (before,))
+        try:
+            self.recorder.delete_clips(before)
+        except Exception:
+            log.exception("Clip clean-up failed")
+        with self._rec_lock:
+            self._active = {k: v for k, v in self._active.items() if v["last_seen"] >= before}
+        return n
+
+    def delete_alerts(self, before: float) -> int:
+        used = {r["snapshot_path"] for r in self.db.query("SELECT snapshot_path FROM sightings WHERE snapshot_path IS NOT NULL")}
+        self._unlink_snaps(r["snapshot_path"] for r in self.db.query(
+            "SELECT snapshot_path FROM alerts WHERE created_at < ? AND snapshot_path IS NOT NULL", (before,))
+            if r["snapshot_path"] not in used)
+        return self.db.execute("DELETE FROM alerts WHERE created_at < ?", (before,))
+
+    def delete_activity(self, before: float) -> int:
+        """Activity timeline, routine results and notes. Pictures used to teach the AI stay."""
+        teaching = {r["image_path"] for r in self.db.query(
+            "SELECT image_path FROM activity_examples WHERE label IS NOT NULL AND image_path IS NOT NULL")}
+        self._unlink_snaps(r["p"] for r in self.db.query(
+            "SELECT image_path AS p FROM activity_log WHERE end_ts < ? AND image_path IS NOT NULL", (before,)) if r["p"] not in teaching)
+        self._unlink_snaps(r["p"] for r in self.db.query(
+            "SELECT image_path AS p FROM activity_examples WHERE ts < ? AND label IS NULL AND image_path IS NOT NULL", (before,)))
+        n = self.db.execute("DELETE FROM activity_log WHERE end_ts < ?", (before,))
+        self.db.execute("DELETE FROM activity_examples WHERE ts < ? AND label IS NULL", (before,))
+        self.db.execute("DELETE FROM person_notes WHERE ts < ?", (before,))
+        return n
+
+    def _tidy(self) -> None:
+        for d in self.paths.snapshots.glob("*"):
+            if d.is_dir() and not any(d.iterdir()):
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
+        try:
+            with self.db.conn() as c:            # give the database's spare log file back to the disk
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            pass
+
     def purge_old(self) -> int:
+        """Automatic clean-up, every 10 minutes. Each kind of data has its own keep time (0 = keep)."""
+        now = time.time()
+        n = 0
+        hours = self.fsetting("route_hours", 12)
+        if hours > 0:
+            n += self.delete_routes(now - hours * 3600)
+        days = self.fsetting("alert_days", 30)
+        if days > 0:
+            self.delete_alerts(now - days * 86400)
         days = self.fsetting("retention_days", 30)
-        cutoff = time.time() - days * 86400
-        old = self.db.query("SELECT snapshot_path FROM sightings WHERE last_seen < ? AND snapshot_path IS NOT NULL", (cutoff,))
-        old += self.db.query("SELECT snapshot_path FROM alerts WHERE created_at < ? AND snapshot_path IS NOT NULL", (cutoff,))
-        # activity pictures go too, except those the admin used to teach the AI
-        teaching = {r["image_path"] for r in self.db.query("SELECT image_path FROM activity_examples WHERE label IS NOT NULL AND image_path IS NOT NULL")}
-        old += [r for r in self.db.query("SELECT image_path AS snapshot_path FROM activity_log WHERE end_ts < ? AND image_path IS NOT NULL", (cutoff,))
-                if r["snapshot_path"] not in teaching]
-        old += self.db.query("SELECT image_path AS snapshot_path FROM activity_examples WHERE ts < ? AND label IS NULL AND image_path IS NOT NULL", (cutoff,))
-        for r in old:
-            try:
-                (self.paths.snapshots / r["snapshot_path"]).unlink(missing_ok=True)
-            except OSError:
-                pass
-        n = self.db.execute("DELETE FROM sightings WHERE last_seen < ?", (cutoff,))
-        self.db.execute("DELETE FROM activity_log WHERE end_ts < ?", (cutoff,))
-        self.db.execute("DELETE FROM activity_examples WHERE ts < ? AND label IS NULL", (cutoff,))
-        self.db.execute("DELETE FROM person_notes WHERE ts < ?", (cutoff,))
-        self.db.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
+        if days > 0:
+            self.delete_activity(now - days * 86400)
         try:
             self.recorder.purge()
         except Exception:
             log.exception("Recording clean-up failed")
-        # remove empty day folders
-        for d in self.paths.snapshots.glob("*"):
-            if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
+        try:
+            self.tiles.trim(int(self.fsetting("tiles_max_mb", 300) * 1e6))
+        except Exception:
+            log.exception("Map clean-up failed")
+        self._tidy()
         return n
 
+    DATA_KINDS = ("routes", "alerts", "activity", "recordings", "map_cache")
+
+    def delete_now(self, kinds) -> dict:
+        """The Delete now buttons in Settings."""
+        out = {}
+        later = time.time() + 60
+        if "routes" in kinds:
+            out["routes"] = self.delete_routes(later)
+        if "alerts" in kinds:
+            out["alerts"] = self.delete_alerts(later)
+        if "activity" in kinds:
+            out["activity"] = self.delete_activity(later)
+        if "recordings" in kinds:
+            out["recordings"] = self.recorder.delete_recordings()
+        if "map_cache" in kinds:
+            self.tiles.clear()
+            out["map_cache"] = 1
+        self._tidy()
+        try:
+            with self.db.conn() as c:            # shrink the database file
+                c.execute("VACUUM")
+        except Exception:
+            log.exception("Could not shrink the database")
+        return out
+
+    def data_usage(self) -> dict:
+        """Disk space used by each kind of data, in bytes."""
+        import shutil
+
+        def folder(p: Path) -> int:
+            return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.exists() else 0
+
+        db = self.db
+        clips = (db.one("SELECT COALESCE(SUM(size_bytes),0) AS n FROM recordings WHERE kind = 'clip'") or {"n": 0})["n"]
+        recs = (db.one("SELECT COALESCE(SUM(size_bytes),0) AS n FROM recordings WHERE kind != 'clip'") or {"n": 0})["n"]
+        dbf = sum(f.stat().st_size for f in self.paths.data.glob("cams.db*") if f.is_file())
+        try:
+            du = shutil.disk_usage(self.paths.data)
+            free, disk = du.free, du.total
+        except OSError:
+            free = disk = 0
+        count = lambda sql: (db.one(sql) or {"n": 0})["n"]
+        return {
+            "routes": {"bytes": folder(self.paths.snapshots) + clips, "count": count("SELECT COUNT(*) AS n FROM sightings")},
+            "alerts": {"bytes": 0, "count": count("SELECT COUNT(*) AS n FROM alerts")},
+            "activity": {"bytes": 0, "count": count("SELECT COUNT(*) AS n FROM activity_log")},
+            "recordings": {"bytes": recs, "count": count("SELECT COUNT(*) AS n FROM recordings WHERE kind != 'clip'")},
+            "map_cache": {"bytes": self.tiles.size_bytes(), "count": 0},
+            "database": {"bytes": dbf},
+            "people": {"bytes": folder(self.paths.enrollments), "count": count("SELECT COUNT(*) AS n FROM people")},
+            "disk_free": free, "disk_total": disk,
+        }
+
     def _maintenance_loop(self) -> None:
-        last_purge = 0.0
+        last_purge = time.time() - 540           # first clean-up a minute after start
         last_routines = 0.0
         while not self._stop.wait(10):
             now = time.time()
@@ -534,7 +707,7 @@ class CamsSystem:
                         and now - st.offline_since > OFFLINE_ALERT_SECONDS:
                     st.offline_alerted = True
                     self._alert("camera_offline", f"Camera {st.name} is offline", None, st.id, None)
-            if now - last_purge > 3600:
+            if now - last_purge > 600:
                 last_purge = now
                 try:
                     self.purge_old()

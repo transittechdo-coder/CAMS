@@ -409,11 +409,11 @@ class Insights:
             p = people.get(pid)
             if not p:
                 continue
+            # (the "changes from usual" notes compared each person with three weeks of history every
+            # night; they were removed to keep CAMS light. The person page still shows their habits.)
             facts = self.day_facts(pid, day)
             self.db.execute("INSERT INTO person_notes(person_id, day, ts, kind, text) VALUES (?,?,?,?,?)",
                             (pid, day, now, "summary", self.summary_text(p, day, facts)))
-            for c in self.changes(p, day, facts):
-                self.db.execute("INSERT INTO person_notes(person_id, day, ts, kind, text) VALUES (?,?,?,?,?)", (pid, day, now, "change", c))
         return len(seen)
 
     def notes(self, pid: int, day: str) -> list[dict]:
@@ -421,31 +421,47 @@ class Insights:
 
     # ------------------------------------------------------------ daily report
     def report(self, day: str, category: str = "", group: str = "", include_unseen: bool = False) -> dict:
+        """Who was seen, first / last time and where, and how they kept their routines.
+
+        Kept light on purpose: three database reads for the whole day, not several per person."""
         d0, d1 = day_bounds(day)
         people = self.people()
-        seen = self.seen_people(d0, d1)
-        rows = []
+        cams = {c["id"]: c["name"] for c in self.db.query("SELECT id, name FROM cameras")}
+        spans: dict[int, list] = defaultdict(list)
+        for r in self.db.query("SELECT person_id, camera_id, camera_name, first_seen, last_seen FROM sightings "
+                               "WHERE person_id IS NOT NULL AND last_seen >= ? AND first_seen < ?", (d0, d1)):
+            spans[r["person_id"]].append((r["first_seen"], r["last_seen"],
+                                          self.place_of(r["camera_id"])[1] or r["camera_name"] or cams.get(r["camera_id"], "a camera")))
+        for r in self.db.query("SELECT person_id, camera_id, camera_name, area_name, start_ts, end_ts FROM activity_log "
+                               "WHERE end_ts >= ? AND start_ts < ?", (d0, d1)):
+            spans[r["person_id"]].append((r["start_ts"], r["end_ts"], r["area_name"] or r["camera_name"] or "a camera"))
         notes = defaultdict(list)
         for n in self.db.query("SELECT person_id, kind, text, routine_id FROM person_notes WHERE day = ? ORDER BY ts", (day,)):
             notes[n["person_id"]].append(n)
+        seen = set(spans)
+        rows = []
         for pid, p in sorted(people.items(), key=lambda kv: kv[1]["full_name"].lower()):
             if category and p["category"] != category:
                 continue
             if group and (p.get("group_name") or "") != group:
                 continue
-            if pid not in seen and not include_unseen:
+            sp = spans.get(pid, [])
+            if not sp and not include_unseen:
                 continue
-            f = self.day_facts(pid, day)
+            places = Counter()
+            for a, b, place in sp:
+                places[place] += max(30, b - a)
             nn = notes.get(pid, [])
+            first_s = min(sp) if sp else None
+            last_s = max(sp, key=lambda x: x[1]) if sp else None
             rows.append({
                 "person_id": pid, "name": p["full_name"], "code": p["person_code"], "category": p["category"], "group": p["group_name"],
-                "first_seen": f["first"]["start"] if f["first"] else None, "last_seen": f["last"]["end"] if f["last"] else None,
-                "places": [{"place": k, "minutes": round(v / 60)} for k, v in f["places"].most_common(4)],
-                "activities": [{"activity": k, "label": self.label(k), "minutes": round(v / 60)} for k, v in f["acts"].most_common(4)],
+                "first_seen": first_s[0] if first_s else None, "last_seen": last_s[1] if last_s else None,
+                "first_place": first_s[2] if first_s else "", "last_place": last_s[2] if last_s else "",
+                "places": [{"place": k, "minutes": round(v / 60)} for k, v in places.most_common(4)],
                 "attended": sum(1 for n in nn if n["kind"] == "attended"), "late": sum(1 for n in nn if n["kind"] == "late"),
                 "missed": sum(1 for n in nn if n["kind"] == "missed"), "out_of_place": sum(1 for n in nn if n["kind"] == "out_of_place"),
-                "notes": [n["text"] for n in nn if n["kind"] in ("missed", "late", "out_of_place", "change")],
-                "summary": next((n["text"] for n in nn if n["kind"] == "summary"), None) or (self.summary_text(p, day, f) if f["first"] else "Not seen by any camera."),
+                "notes": [n["text"] for n in nn if n["kind"] in ("missed", "late", "out_of_place")],
             })
         return {"day": day, "people": rows, "seen": len(seen & set(people)), "enrolled": len(people),
                 "missed": sum(r["missed"] for r in rows), "late": sum(r["late"] for r in rows), "out_of_place": sum(r["out_of_place"] for r in rows)}
@@ -453,12 +469,11 @@ class Insights:
     def report_csv(self, rep: dict) -> str:
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(["Name", "ID", "Type", "Class / dept", "First seen", "Last seen", "Places", "Activities", "On time", "Late", "Missed", "Out of place", "Notes"])
+        w.writerow(["Name", "ID", "Type", "Class / dept", "First seen", "Last seen", "Places", "On time", "Late", "Missed", "Out of place", "Notes"])
         for r in rep["people"]:
             w.writerow([r["name"], r["code"], r["category"], r["group"],
                         hm(r["first_seen"]) if r["first_seen"] else "", hm(r["last_seen"]) if r["last_seen"] else "",
                         "; ".join(f"{p['place']} {p['minutes']} min" for p in r["places"]),
-                        "; ".join(f"{a['label']} {a['minutes']} min" for a in r["activities"]),
                         r["attended"], r["late"], r["missed"], r["out_of_place"], " | ".join(r["notes"])])
         return buf.getvalue()
 

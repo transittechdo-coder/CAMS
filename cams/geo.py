@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import threading
+import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -151,6 +153,11 @@ class TileCache:
             return None
         p = self.path(source, z, x, y)
         if p.is_file():
+            try:  # mark as recently used (at most once a day) so trim() keeps it
+                if time.time() - p.stat().st_mtime > 86400:
+                    os.utime(p)
+            except OSError:
+                pass
             return p.read_bytes()
         if not online:
             return None
@@ -176,6 +183,38 @@ class TileCache:
 
     def size_bytes(self) -> int:
         return sum(f.stat().st_size for f in self.folder.rglob("*") if f.is_file()) if self.folder.exists() else 0
+
+    def trim(self, max_bytes: int) -> int:
+        """Delete the least recently used pieces until the saved map is under max_bytes."""
+        if not self.folder.exists():
+            return 0
+        files = []
+        for f in self.folder.rglob("*"):
+            if f.is_file():
+                st = f.stat()
+                files.append((st.st_mtime, st.st_size, f))
+        total = sum(f[1] for f in files)
+        removed = 0
+        if total <= max_bytes:
+            return 0
+        for _, size, f in sorted(files):
+            if total <= max_bytes * 0.9:
+                break
+            try:
+                f.unlink()
+                total -= size
+                removed += 1
+            except OSError:
+                pass
+        for d in sorted(self.folder.rglob("*"), reverse=True):
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+        return removed
+
+    def clear(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.folder, ignore_errors=True)
 
 
 def choose_zoom(lat: float, width_m: float, height_m: float, max_px: int = MAX_PICTURE_PX) -> int:

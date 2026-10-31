@@ -411,18 +411,20 @@ class Recorder:
         return sum(f.stat().st_size for f in self.folder.rglob("*") if f.is_file())
 
     def purge(self) -> int:
-        """Delete old recordings and keep the folder under the size limit."""
+        """Delete old recordings and clips, and keep the folder under the size limit
+        and the disk from filling up. 0 days / hours = keep for ever."""
         db, removed = self.sys.db, 0
         now = time.time()
         rec_days = self.sys.fsetting("recording_days", 7)
-        clip_days = self.sys.fsetting("retention_days", 30)
-        old = db.query("SELECT * FROM recordings WHERE status = 'done' AND keep = 0 AND "
-                       "((kind != 'clip' AND end_ts < ?) OR (kind = 'clip' AND end_ts < ?))",
-                       (now - rec_days * 86400, now - clip_days * 86400))
-        for r in old:
-            self.delete(r)
-            removed += 1
-        limit = self.sys.fsetting("recording_max_gb", 50) * 1024 ** 3
+        clip_hours = self.sys.fsetting("route_hours", 12)
+        if rec_days > 0:
+            for r in db.query("SELECT * FROM recordings WHERE status = 'done' AND keep = 0 AND kind != 'clip' AND end_ts < ?",
+                              (now - rec_days * 86400,)):
+                self.delete(r)
+                removed += 1
+        if clip_hours > 0:
+            removed += self.delete_clips(now - clip_hours * 3600)
+        limit = self.sys.fsetting("recording_max_gb", 10) * 1024 ** 3
         total = (db.one("SELECT COALESCE(SUM(size_bytes), 0) AS n FROM recordings") or {"n": 0})["n"]
         if limit > 0 and total > limit:
             for r in db.query("SELECT * FROM recordings WHERE status = 'done' AND keep = 0 "
@@ -432,10 +434,59 @@ class Recorder:
                 total -= r["size_bytes"] or 0
                 self.delete(r)
                 removed += 1
+        removed += self.keep_disk_free(self.sys.fsetting("min_free_gb", 5) * 1024 ** 3)
+        self._remove_empty_dirs()
+        return removed
+
+    def delete_clips(self, before: float) -> int:
+        n = 0
+        for r in self.sys.db.query("SELECT * FROM recordings WHERE kind = 'clip' AND keep = 0 AND end_ts < ?", (before,)):
+            self.delete(r)
+            n += 1
+        return n
+
+    def delete_recordings(self) -> int:
+        """Every recording that is not marked Keep (the Delete now button in Settings)."""
+        with self._lock:
+            busy = {t.row_id for t in self.threads.values() if t.is_alive()}
+        n = 0
+        for r in self.sys.db.query("SELECT * FROM recordings WHERE kind != 'clip' AND keep = 0 AND status = 'done'"):
+            if r["id"] not in busy:
+                self.delete(r)
+                n += 1
+        self._remove_empty_dirs()
+        return n
+
+    def keep_disk_free(self, min_free: float) -> int:
+        """When the disk is nearly full, delete the oldest videos (all-the-time recordings
+        first, then clips, then manual recordings) until min_free bytes are free again."""
+        if min_free <= 0:
+            return 0
+        try:
+            free = shutil.disk_usage(self.folder).free
+        except OSError:
+            return 0
+        if free >= min_free:
+            return 0
+        n = 0
+        for r in self.sys.db.query("SELECT * FROM recordings WHERE status = 'done' AND keep = 0 "
+                                   "ORDER BY CASE kind WHEN 'continuous' THEN 0 WHEN 'clip' THEN 1 ELSE 2 END, start_ts LIMIT 5000"):
+            if free >= min_free:
+                break
+            free += r["size_bytes"] or 0
+            self.delete(r)
+            n += 1
+        if n:
+            log.warning("Disk nearly full: deleted %d old videos", n)
+        return n
+
+    def _remove_empty_dirs(self) -> None:
         for d in sorted(self.folder.rglob("*"), reverse=True):
             if d.is_dir() and not any(d.iterdir()):
-                d.rmdir()
-        return removed
+                try:
+                    d.rmdir()
+                except OSError:
+                    pass
 
     # ------------------------------------------------------------ playback
     def frame_at(self, row: dict, t: float, max_width: int = 960) -> bytes | None:

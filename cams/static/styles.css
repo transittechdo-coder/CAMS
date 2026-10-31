@@ -459,7 +459,8 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .report-filters { margin: 14px 0; }
 .report-filters select { padding: 4px 8px; }
 .report-table td { vertical-align: top; font-size: 13px; }
-.report-notes { max-width: 420px; display: grid; gap: 4px; }
+.report-notes { max-width: 420px; }
+.report-notes > div + div { margin-top: 4px; }
 .seg.tabs { margin-bottom: 14px; }
 .teach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
 .teach-card { background: var(--sheet); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; display: grid; gap: 6px; font-size: 12.5px; }
@@ -515,6 +516,16 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .route-list li::before { display: none; }
 .route-list li:hover { background: var(--line-2); }
 .route-list li.sel { background: var(--teal-soft); }
+.route-list li.hour-head { cursor: default; justify-content: space-between; padding: 10px 8px 4px; margin-top: 4px;
+  border-top: 1px solid var(--line); font: 600 12px var(--display); letter-spacing: .04em; color: var(--ink-2, var(--ink)); }
+.route-list li.hour-head:first-child { border-top: 0; margin-top: 0; }
+.route-list li.hour-head:hover { background: none; }
+.route-list li.keep-hint { cursor: default; display: block; }
+.route-list li.keep-hint:hover { background: none; }
+.usage-table td.num { text-align: right; white-space: nowrap; }
+.usage-table td { vertical-align: middle; }
+.usage-bar { height: 8px; border-radius: 4px; background: var(--line-2); overflow: hidden; margin-top: 6px; }
+.usage-bar > span { display: block; height: 100%; background: var(--teal); }
 .route-list .grow { flex: 1; min-width: 0; }
 .stop-badge { flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-content: center; font: 700 12px var(--display);
   border: 2px solid var(--teal); background: var(--sheet); color: var(--ink); }

@@ -44,7 +44,7 @@ export const GUIDE = [
       "For every recognised person CAMS writes a Day timeline (on their page): what they were doing, where and when, such as Eating or drinking in the Dining Hall from 1:05 PM.",
       "In Activity & routines, add routines like Lunch in the dining hall 13:00-13:45. CAMS then notes who kept it, who came late, and who missed it and where they were instead.",
       "Teach the AI your own activities: label at least 3 pictures of each one. Press Correct on any timeline entry to fix it; CAMS learns from your answer.",
-      "Open Daily report to see everyone's day, print it or download it, and type questions in Ask CAMS, such as Who missed lunch today? or Where was Godwill at 8:00 AM?",
+      "Open Daily report to see everyone's day: who was seen, where and when, and the routines they kept. Print it or download it.",
     ],
   },
   {
@@ -62,7 +62,7 @@ const STEPS = [
   { sel: '.nav-btn[data-page="builder"]', title: "2. Draw your campus", text: "Draw buildings and gates, then put each camera on the map. Open 3D Map Studio to draw the campus in 3D." },
   { sel: '.nav-btn[data-page="people"]', title: "3. Enrol people", text: "Add students and staff, record consent, and capture their faces from five angles." },
   { sel: '.nav-btn[data-page="find"]', title: "4. Find anyone", text: "Type a name to see where and when they were last seen, and their path on the map." },
-  { sel: '.nav-btn[data-page="report"]', title: "5. Daily report", text: "What everyone did today, who kept or missed routines, and Ask CAMS questions like Who missed lunch today?" },
+  { sel: '.nav-btn[data-page="report"]', title: "5. Daily report", text: "Who was seen today, where and when, and who kept or missed routines." },
   { sel: '.nav-btn[data-page="alerts"]', title: "6. Alerts", text: "Watch-list people, strangers in restricted areas and offline cameras show up here." },
   { sel: '.nav-btn[data-page="guide"]', title: "Need help later?", text: "The full step-by-step guide is always here." },
 ];

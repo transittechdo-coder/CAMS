@@ -46,13 +46,14 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
 
 | | |
 | --- | --- |
-| **Find a person** | Search by name, ID number or photo. Shows last seen place and time, the path on the map and a timeline (today, 24 hours, 7 or 30 days). |
+| **Find a person** | Search by name, ID number or photo. Shows last seen place and time, the path on the map and a timeline split into hours (last 1, 3, 6 or 12 hours). Routes are deleted after 12 hours (change it in Settings). |
 | **Any camera** | IP, Ethernet/PoE and NVR cameras (Hikvision, Dahua, Uniview, TP-Link, Reolink, Axis, EZVIZ, any ONVIF), HTTP/MJPEG cameras, phones, USB webcams. Address helper, connection test, network scan, auto-reconnect. |
 | **Faces from every side** | Nine views per person: front, half left, left, half right, right, up, down, back, top. Webcam wizard, any CAMS camera, photos, or a turn-around video. |
 | **Campus builder** | Draw buildings, gates, fields, parking and zones on a plan or satellite picture. Turn, move and copy them, add and name floors, place and aim every camera. |
 | **3D Map Studio** | Draw the campus in 3D like a game level editor: free fly camera and walk mode, 50+ shapes, buildings with floors, rooms, walls with doors and windows, stairs, ladders, self-fitting roofs, stacking, floor-by-floor cut view, ground paint, tree and path brushes, undo, export. |
 | **Activity timeline** | An on-device AI (body pose + objects + movement + place) writes what every recognised person is doing into their profile: eating, sitting, walking, reading, using a phone, playing sport... Teach it your own activities from example pictures, add place & time rules. |
-| **Routines & daily report** | Set where people should be (Lunch in the dining hall 13:00–13:45). CAMS notes who kept it, came late or missed it and where they were instead, learns each person's usual pattern, flags changes, and writes a daily report (print / CSV). **Ask CAMS** answers questions like *Who missed lunch today?* offline. |
+| **Routines & daily report** | Set where people should be (Lunch in the dining hall 13:00–13:45). CAMS notes who kept it, came late or missed it and where they were instead, learns each person's usual pattern, and writes a short daily report (print / CSV). |
+| **Light on any PC** | Face AI speed (Fast for small PCs), faces that stay put are not worked out again, still cameras are checked less often, the 3D map draws only what you look at. **Settings → Data and storage** sets how long each kind of data is kept, shows the space used and has *Delete now* buttons; CAMS never fills the disk. |
 | **Real satellite map** | Find your compound on a world satellite map and use it as the campus map (internet needed once, then offline). Every camera and sighting gets an exact GPS position you can copy into Google Maps. |
 | **Routes with video** | A person's movements are drawn as a line from building to building with direction arrows and numbered stops, each with a small picture and a short video clip of the moment they were seen. |
 | **Recording** | Record any camera with one button, or all the time. Play recordings inside CAMS, download them as .mp4, or download just a part (camera + time from / to). Old videos delete themselves. |
@@ -74,7 +75,7 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
     <td width="50%"><img src="docs/images/alerts.png" alt="Alerts with scene pictures"><br><sub><b>Alerts</b> for crowds, running and offline cameras</sub></td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/images/daily-report.png" alt="Daily report with Ask CAMS answering who missed lunch"><br><sub><b>Daily report and Ask CAMS</b>: routines kept, late or missed, with written notes</sub></td>
+    <td colspan="2"><img src="docs/images/daily-report.png" alt="Daily report: who was seen, first and last seen, places and routines"><br><sub><b>Daily report</b>: who was seen, where and when, routines kept, late or missed</sub></td>
   </tr>
   <tr>
     <td colspan="2"><img src="docs/images/map-studio.png" alt="3D Map Studio with a classroom block, hip roof and roof shapes"><br><sub><b>3D Map Studio</b>: draw buildings, roofs, floors, stairs and trees, then fly or walk through them</sub></td>

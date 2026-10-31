@@ -931,9 +931,17 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         def gen():
             boundary = b"--frame\r\n"
             idle = 0
+            sent_at = None
             while idle < 600:
+                w = sysm.cameras.get(cid)
+                stamp = w.state.last_frame_at if w else None
+                if stamp is not None and stamp == sent_at:
+                    # no new picture from the camera: do not draw and send the same one again
+                    time.sleep(delay)
+                    continue
                 jpg = sysm.render_frame(cid, max_width=960)
                 if jpg:
+                    sent_at = stamp
                     idle = 0
                     yield boundary + b"Content-Type: image/jpeg\r\nContent-Length: " + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n"
                 else:
@@ -1370,7 +1378,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     EDITABLE = {"site_name", "match_threshold", "analysis_fps", "sighting_merge_seconds", "retention_days",
                 "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
                 "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
-                "recording_max_gb", "colour_enhance", "colour_refresh"}
+                "recording_max_gb", "colour_enhance", "colour_refresh", "speed_mode", "route_hours", "alert_days",
+                "min_free_gb", "tiles_max_mb"}
     PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
     @app.get("/api/settings")
@@ -1392,8 +1401,18 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Daily summary time must look like 20:30.")
             if "activity_ai" in values and str(values["activity_ai"]) not in ("0", "1"):
                 raise HTTPException(400, "Activity AI must be on or off.")
-            if "retention_days" in values and not 1 <= int(values["retention_days"]) <= 3650:
-                raise HTTPException(400, "Keep records for 1 to 3650 days.")
+            if "retention_days" in values and not 0 <= int(values["retention_days"]) <= 3650:
+                raise HTTPException(400, "Keep the activity timeline for 1 to 3650 days (0 = keep).")
+            if "alert_days" in values and not 0 <= int(values["alert_days"]) <= 3650:
+                raise HTTPException(400, "Keep alerts for 1 to 3650 days (0 = keep).")
+            if "route_hours" in values and not 0 <= float(values["route_hours"]) <= 24 * 3650:
+                raise HTTPException(400, "Keep routes for 1 hour or more (0 = keep).")
+            if "speed_mode" in values and values["speed_mode"] not in ("auto", "fast", "balanced", "detailed"):
+                raise HTTPException(400, "Face AI speed must be auto, fast, balanced or detailed.")
+            if "min_free_gb" in values and not 0 <= float(values["min_free_gb"]) <= 1000:
+                raise HTTPException(400, "Free space to keep must be 0 to 1000 GB.")
+            if "tiles_max_mb" in values and not 20 <= float(values["tiles_max_mb"]) <= 100000:
+                raise HTTPException(400, "Saved map space must be 20 MB or more.")
             if "map_mouse" in values and values["map_mouse"] not in ("standard", "swapped"):
                 raise HTTPException(400, "Mouse buttons must be standard or swapped.")
             if "sighting_clips" in values and str(values["sighting_clips"]) not in ("0", "1"):
@@ -1408,8 +1427,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Clearer night pictures must be on or off.")
             if "colour_refresh" in values and not 0.15 <= float(values["colour_refresh"]) <= 10:
                 raise HTTPException(400, "Colour refresh must be 0.15 to 10 seconds.")
-            if "recording_days" in values and not 1 <= int(values["recording_days"]) <= 365:
-                raise HTTPException(400, "Keep recordings for 1 to 365 days.")
+            if "recording_days" in values and not 0 <= int(values["recording_days"]) <= 365:
+                raise HTTPException(400, "Keep recordings for 1 to 365 days (0 = keep).")
             if "recording_max_gb" in values and not 1 <= float(values["recording_max_gb"]) <= 20000:
                 raise HTTPException(400, "The recording space must be 1 to 20000 GB.")
         except ValueError:
@@ -1429,6 +1448,22 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         n = sysm.purge_old()
         db.audit(user["username"], "purge", {"deleted": n})
         return {"deleted": n}
+
+    @app.get("/api/data/usage")
+    def data_usage(user=admin):
+        out = sysm.data_usage()
+        out["speed_mode"] = sysm.speed_mode()
+        out["stats"] = {k: sysm.stats.get(k, 0) for k in ("frames_analysed", "frames_skipped", "prints_reused")}
+        return out
+
+    @app.post("/api/data/delete")
+    def data_delete(body: dict, user=admin):
+        kinds = [k for k in (body.get("kinds") or []) if k in sysm.DATA_KINDS]
+        if not kinds:
+            raise HTTPException(400, "Choose what to delete.")
+        out = sysm.delete_now(kinds)
+        db.audit(user["username"], "data_delete", out)
+        return {"deleted": out}
 
     @app.get("/api/backup")
     def backup(user=admin):

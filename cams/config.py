@@ -107,12 +107,19 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # Seconds; a person seen again on the same camera within this window
     # extends the existing sighting instead of creating a new one.
     "sighting_merge_seconds": "20",
-    # Days to keep sightings and their snapshots before automatic deletion.
+    # How long CAMS keeps each kind of data before deleting it by itself (0 = never).
+    # Routes: every place a person was seen, with the face pictures and short clips.
+    "route_hours": "12",
+    # Alerts and their pictures.
+    "alert_days": "30",
+    # Activity timeline, routine results and daily notes.
     "retention_days": "30",
     # Blur faces of people who are not enrolled in live view and snapshots.
     "blur_unknown": "1",
     # Save a small face snapshot with each sighting.
     "save_snapshots": "1",
+    # Face AI speed: auto (fast on PCs with 4 or fewer cores) | fast | balanced | detailed.
+    "speed_mode": "auto",
     # Number of recognition worker threads (0 = automatic).
     "workers": "0",
     # Activity AI: follow what each recognised person is doing (1 = on).
@@ -134,7 +141,11 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "record_fps": "8",
     "record_width": "1280",
     "recording_days": "7",
-    "recording_max_gb": "50",
+    "recording_max_gb": "10",
+    # Always leave this much free space on the disk (GB): the oldest videos go first.
+    "min_free_gb": "5",
+    # Saved satellite map pieces (MB). Only the parts you look at are downloaded.
+    "tiles_max_mb": "300",
     # Colour for black-and-white (night / infrared) video: clear up dark pictures,
     # and how often (seconds) the colour AI refreshes each watched camera.
     "colour_enhance": "1",
