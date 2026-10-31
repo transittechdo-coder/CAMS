@@ -34,6 +34,12 @@ MODELS = {
         f"{BASE}/object_detection_nanodet/object_detection_nanodet_2022nov.onnx",
         "4b82da9944b88577175ee23a459dce2e26e6e4be573def65b1055dc2d9720186",
     ),
+    # picture features for the fire / smoke second opinion (MobileNetV2, ImageNet, Apache 2.0);
+    # the small trained part is cams/data/fire_smoke_head.npz (scripts/train_fire_smoke.py)
+    "image_classification_mobilenetv2_2022apr.onnx": (
+        f"{BASE}/image_classification_mobilenet/image_classification_mobilenetv2_2022apr.onnx",
+        "c0c3f76d93fa3fd6580652a45618618a220fced18babf65774ed169de0432ad5",
+    ),
     # number plates: reader (CCT-XS v1, fast-plate-ocr project, MIT licence)
     "plate_reader_cct_xs_v1.onnx": (
         "https://github.com/ankandrew/cnn-ocr-lp/releases/download/arg-plates/cct_xs_v1_global.onnx",

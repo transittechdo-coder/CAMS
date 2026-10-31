@@ -1221,7 +1221,9 @@ async function alerts(el) {
       h("div", {}, h("div", { class: "who" }, a.message), h("div", { class: "where" }, h("span", { class: `tag ${KIND[a.kind]?.[1] || ""}` }, KIND[a.kind]?.[0] || a.kind), " ", clock(a.created_at))),
       h("div", { class: "row" },
         a.person_id ? h("button", { class: "small", onclick: () => go("find", a.person_id) }, "Track") : null,
-        a.acknowledged ? h("span", { class: "faint" }, "Seen") : h("button", { class: "small", onclick: async () => { await post(`/api/alerts/${a.id}/ack`); load(); } }, "Seen")),
+        ["fire", "smoke", "person_down"].includes(a.kind) && !a.wrong ? h("button", { class: "small", title: "Nothing was wrong: this camera will not ring for the same thing again",
+          onclick: async () => { await post(`/api/alerts/${a.id}/wrong`); toast("CAMS learned from this wrong alarm"); load(); } }, "Wrong alarm") : null,
+        a.wrong ? h("span", { class: "tag" }, "Wrong alarm") : a.acknowledged ? h("span", { class: "faint" }, "Seen") : h("button", { class: "small", onclick: async () => { await post(`/api/alerts/${a.id}/ack`); load(); } }, "Seen")),
     ))));
   }
   await load();

@@ -214,7 +214,8 @@ class Health:
             "now": now, "started_at": self.started_at, "uptime": round(now - self.started_at),
             "cameras": cams, "disk": disk, "load": load, "battery": self.battery(),
             "ai": {"faces": s.models_ok, "people": s.activity_ok, "pose": bool(s.behaviour and s.behaviour.pose_ok),
-                   "plates": bool(getattr(s, "plates", None) and s.plates.available)},
+                   "plates": bool(getattr(s, "plates", None) and s.plates.available),
+                   "fire_smoke": bool(getattr(s, "fire_ai_ok", False))},
             "autostart": autostart_state(), "downtime": gaps, "last_backup": last_backup,
             "frames_analysed": s.stats.get("frames_analysed", 0),
         }

@@ -198,6 +198,7 @@ class Track:
     last_seen: float
     history: list[tuple[float, float, float, float]] = field(default_factory=list)  # t, cx, cy, height
     flagged: set = field(default_factory=set)
+    score: float = 1.0                     # how sure the person finder was, last time
 
     @property
     def dwell(self) -> float:
@@ -265,6 +266,8 @@ class Tracker:
             used.add(best.id)
             best.box = box
             best.last_seen = ts
+            if len(b) > 4:
+                best.score = float(b[4])
             best.history.append((ts, cx, cy, box[3]))
             best.history = best.history[-60:]
         return [self.tracks[i] for i in used]

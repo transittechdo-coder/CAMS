@@ -1,6 +1,7 @@
 package com.transittech.camsguard
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.app.KeyguardManager
 import android.content.Context
 import android.graphics.BitmapFactory
@@ -112,6 +113,23 @@ class AlarmActivity : Activity() {
                 }.start()
             }
         }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) })
+        if (kind != "emergency_test") card.addView(Button(this).apply {
+            text = "Wrong alarm"
+            textSize = 17f
+            isAllCaps = false
+            setOnClickListener {
+                AlertDialog.Builder(this@AlarmActivity)
+                    .setMessage("Wrong alarm? CAMS will learn not to ring for this again.")
+                    .setPositiveButton("Yes, wrong alarm") { _, _ ->
+                        isEnabled = false
+                        Alarm.stop()
+                        Thread {
+                            val ok = try { cams.wrong(id); true } catch (e: Exception) { false }
+                            runOnUiThread { text = if (ok) "Thank you: CAMS learned from this" else "Not sent: press again"; isEnabled = !ok }
+                        }.start()
+                    }.setNegativeButton("Cancel", null).show()
+            }
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(8) })
         return card.also {
             it.layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { bottomMargin = dp(14) }
         }
