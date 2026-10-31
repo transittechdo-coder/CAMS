@@ -304,14 +304,40 @@ that comes in or out is listed in **Vehicles** with the time, the camera and a p
 - The reader can mistake similar characters (0 and O, 8 and B); CAMS matches those to your list
   anyway. Always check the plate picture before acting.
 
-## Guard view on phones
+## Guards' phones: the CAMS Guard app
 
-In **Settings → Phones**, tick **Let phones and other computers on this network open CAMS** and restart
-CAMS. A QR code appears: guards connect their phone to the same Wi-Fi, scan it, and sign in with their
-own CAMS account. The guard view shows alerts (with the red emergency screen, siren and vibration),
-the cameras, visitors inside (with Check out) and Find a person. Add it to the home screen and keep it
-open: the phone can only sound while the page is open. If phones cannot connect, allow CAMS through the
-Windows firewall for Private networks. Nothing goes over the internet.
+Guards get CAMS alarms on their phones over the site's Wi-Fi. Nothing goes over the internet.
+
+**Once, on the CAMS computer:** Settings → Phones → tick **Allow phones on this network**, then close
+CAMS and open it again. (The first time, Windows may ask to let CAMS through the firewall: choose
+*Private networks* and press *Allow*.)
+
+**For each guard's phone (about one minute):**
+
+1. Connect the phone to the site's Wi-Fi.
+2. On the CAMS computer: Settings → Phones → **Add a phone**. Choose the guard, or type a new guard's
+   name. A big QR code appears.
+3. **The phone does not have the app yet:** open the phone's camera, point it at the code and press the
+   link. Press **Install the app** (allow installing from the browser if the phone asks). The app comes
+   from the CAMS computer: no internet and no Play Store needed.
+4. Open **CAMS Guard**, press **Scan the code** and point the phone at the same code.
+5. Press **Allow** on the questions the phone asks (notifications, running in the background, alarm on
+   the locked screen).
+
+That is all: no address, user name or password to type. The phone stays connected for a year.
+
+**What the guard sees:** a green bar *All is well*. For fire, heavy smoke or a person down, the phone
+rings loudly (also on silent and when locked), vibrates and shows a red screen with the camera's picture
+and one big button, **I'm handling it**. Other alerts (a visitor who stayed too long, a flagged vehicle,
+a bag left behind...) come as normal notifications. Below the bar are the guard screens: alerts,
+cameras, visitors inside (with Check out) and find a person.
+
+- **Lost phone or a guard leaves:** Settings → Phones → **Disconnect**. That phone stops at once.
+- If the CAMS computer's address changes, the app finds it again by itself.
+- If the phone cannot reach CAMS for a minute and a half, it says so, so the guard knows alarms cannot
+  arrive (for example when the phone left the Wi-Fi).
+- iPhones: point the camera at the same code and press the link to use the guard page in the browser
+  (keep it open: an iPhone can only ring while the page is open).
 
 ## Power cuts and System health
 

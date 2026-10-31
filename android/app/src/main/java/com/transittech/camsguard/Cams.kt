@@ -60,7 +60,7 @@ class Cams(private val context: Context) {
     private fun alive(b: String): Boolean = try {
         val c = open("$b/api/status", "GET", 2500)
         c.responseCode == 200 && JSONObject(c.inputStream.bufferedReader().readText()).optString("app") == "CAMS"
-    } catch (e: Exception) { false }
+    } catch (e: Exception) { android.util.Log.w("CAMSGuard", "No CAMS at $b: $e"); false }
 
     /** Ask the Wi-Fi "is CAMS here?"; the CAMS computer answers with its address. */
     private fun discover(): Pair<String, Int>? = try {

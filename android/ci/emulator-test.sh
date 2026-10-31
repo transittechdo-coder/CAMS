@@ -19,6 +19,15 @@ adb shell am start -W -n $PKG/.MainActivity
 shot 1-welcome 4
 adb shell am force-stop $PKG
 
+# diagnostics, saved next to the screenshots
+{
+  echo "QR=$QR"
+  ss -ltnp 2>/dev/null | grep 8765
+  curl -s -m 5 http://127.0.0.1:8765/api/status; echo
+  adb shell "echo -e 'GET /api/status HTTP/1.0\r\n\r\n' | nc -w 5 10.0.2.2 8765" | tail -3
+  adb shell ping -c 2 10.0.2.2
+} > "$OUT/diag.txt" 2>&1
+
 # 2. connect with the code (debug hook instead of the camera)
 adb shell am start -W -n $PKG/.MainActivity --es qr "'$QR'"
 shot 2-connected 12
@@ -66,4 +75,5 @@ adb shell dumpsys notification | grep -q "Visitor stayed too long" || { echo "::
 adb shell am start -W -n $PKG/.MainActivity
 shot 7-main 6
 adb logcat -d -s AndroidRuntime:E | tail -40
+adb logcat -d | grep -i -E "CAMSGuard|camsguard|cleartext|AndroidRuntime" | tail -80 > "$OUT/logcat.txt"
 exit $fail
