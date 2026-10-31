@@ -11,6 +11,7 @@ ICON = ROOT / "installer" / "cams.ico"
 datas = [
     (str(ROOT / "cams" / "static"), "cams/static"),
     (str(ROOT / "models"), "models"),
+    (str(ROOT / "cams" / "data"), "cams/data"),     # the trained fire / smoke checker
 ]
 
 a = Analysis(

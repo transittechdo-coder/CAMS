@@ -84,7 +84,11 @@ async function pollEmergencies() {
         h("p", {}, h("b", {}, EMERGENCY[a.kind]), " · ", time(a.created_at), a.camera_name ? ` · ${a.camera_name}` : ""),
         h("p", {}, a.message),
         h("button", { class: "ok", onclick: async (e) => { e.target.disabled = true; try { await api(`/api/alerts/${a.id}/ack`, { method: "POST" }); } catch {} pollEmergencies(); } },
-          a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"))),
+          a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
+        a.kind !== "emergency_test" ? h("button", { style: "width:100%;margin-top:8px", onclick: async (e) => {
+          if (!confirm("Wrong alarm? CAMS will learn not to ring for this again.")) return;
+          e.target.disabled = true; try { await api(`/api/alerts/${a.id}/wrong`, { method: "POST" }); } catch {} pollEmergencies();
+        } }, "Wrong alarm") : null)),
       h("p", {}, "Tanzania: 114 fire and rescue, 112 emergency."));
   }
   em.classList.remove("hidden");

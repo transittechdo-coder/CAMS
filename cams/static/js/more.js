@@ -68,7 +68,7 @@ export async function health(el) {
       h("span", { class: `tag ${g.reason === "unexpected" ? "amber" : ""}` }, g.reason === "unexpected" ? "power cut or crash" : "CAMS was closed")))) :
       h("p", { class: "muted", style: { margin: 0 } }, "CAMS has not been off since it was installed."));
     const yes = (ok, label) => h("span", { class: `tag ${ok ? "teal" : ""}` }, `${ok ? "✓" : "✗"} ${label}`);
-    ai.replaceChildren(yes(r.ai.faces, "Face recognition"), yes(r.ai.people, "Person detection"), yes(r.ai.pose, "Body pose"), yes(r.ai.plates, "Number plates"));
+    ai.replaceChildren(yes(r.ai.faces, "Face recognition"), yes(r.ai.people, "Person detection"), yes(r.ai.pose, "Body pose"), yes(r.ai.plates, "Number plates"), yes(r.ai.fire_smoke, "Fire / smoke checker"));
     pc.replaceChildren(...keep(
       r.load ? `Computer load: processor ${Math.round(r.load.cpu)}%, memory ${Math.round(r.load.ram)}% (CAMS uses ${r.load.cams_ram_mb} MB). ` : "",
       `${r.frames_analysed.toLocaleString()} pictures checked by the AI since start. `,

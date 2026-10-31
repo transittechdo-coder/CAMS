@@ -274,6 +274,13 @@ sounds again.
   kitchen camera that sees cooking fires).
 - **Settings → Emergencies:** how easily they trigger (*Low*, *Normal*, *High*), the beep on this
   computer, and **Test the alarm** to check every window shows it.
+- **Fewer false alarms (version 1.8):** a trained AI now gives a second opinion before fire and smoke
+  alarms. It learned from about 17,000 pictures of fire, smoke and normal scenes, including the traffic
+  cones, lit signs, lamps and glare that used to cause false alarms. Person down is confirmed with the
+  body-pose AI; people cut off by the edge of the picture, on benches, chairs, sofas and beds don't
+  count, and on sports fields CAMS waits three times longer.
+- **Wrong alarm:** when an alarm was not real, press **Wrong alarm** (on the red screen, in Alerts, or
+  on the guard's phone). That camera remembers what it saw and does not ring again for the same thing.
 - These are early warnings from cameras and can be wrong both ways. Keep smoke detectors, fire
   alarms and a first-aid plan. Tanzania emergency numbers: **114** fire and rescue, **112** general.
 
