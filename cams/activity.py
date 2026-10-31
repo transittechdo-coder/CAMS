@@ -40,6 +40,11 @@ DEFAULT_ANALYTICS = {
     "running": False,
     "after_hours": "",       # e.g. "18:00-06:00"; empty = use the area's closed hours
     "tamper": True,
+    # emergencies (see emergency.py): on for every camera unless turned off
+    "fire": True,
+    "smoke": True,
+    "person_down": True,
+    "down_seconds": 20,      # someone lying still this long = alert (sooner after a fall)
 }
 
 ALERT_COOLDOWN = 300         # seconds between two alerts of the same kind on one camera

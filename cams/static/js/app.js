@@ -194,9 +194,84 @@ async function route() {
   catch (e) { fail(e); }
 }
 
-async function pollAlerts() {
+// ------------------------------------------------------------------ emergencies
+// Fire, smoke and a person down cover the whole window in red, with a siren, on every page,
+// until someone presses "I'm handling it". The PC running CAMS also beeps (set in Settings).
+export const EMERGENCY = {
+  fire: { title: "FIRE", icon: "🔥", say: "Possible fire" },
+  smoke: { title: "HEAVY SMOKE", icon: "💨", say: "Heavy smoke" },
+  person_down: { title: "PERSON DOWN", icon: "🚑", say: "Someone is lying on the ground" },
+  emergency_test: { title: "ALARM TEST", icon: "🔔", say: "This is only a test" },
+};
+let siren = null, audio = null, muted = false, shownKey = "";
+const overlay = h("div", { class: "emergency hidden", role: "alertdialog", "aria-modal": "true", "aria-live": "assertive" });
+document.body.append(overlay);
+
+function unlockAudio() {                 // browsers only allow sound after the first click or key
+  if (audio) return;
+  try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch { audio = null; }
+}
+window.addEventListener("pointerdown", unlockAudio, { once: true });
+window.addEventListener("keydown", unlockAudio, { once: true });
+
+function startSiren() {
+  if (siren || muted) return;
+  unlockAudio();
+  if (!audio) return;
+  audio.resume?.();
+  const osc = audio.createOscillator(), gain = audio.createGain();
+  osc.type = "square"; gain.gain.value = 0.12;
+  osc.connect(gain).connect(audio.destination);
+  osc.start();
+  let hi = false;
+  const t = setInterval(() => { hi = !hi; osc.frequency.setValueAtTime(hi ? 1000 : 700, audio.currentTime); }, 420);
+  siren = { stop: () => { clearInterval(t); try { osc.stop(); } catch {} } };
+}
+function stopSiren() { siren?.stop(); siren = null; }
+
+function showEmergencies(list) {
+  if (!list.length) {
+    overlay.classList.add("hidden"); document.body.classList.remove("in-emergency");
+    stopSiren(); shownKey = ""; muted = false;
+    return;
+  }
+  const key = list.map((a) => a.id).join(",");
+  if (key !== shownKey) {
+    const fresh = list.some((a) => !shownKey.split(",").includes(String(a.id)));
+    if (fresh) muted = false;            // a new emergency always sounds, even after Mute
+    shownKey = key;
+    overlay.replaceChildren(h("div", { class: "em-box" },
+      h("div", { class: "em-head" }, h("span", { class: "em-pulse", "aria-hidden": "true" }),
+        h("h1", {}, list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind].title),
+        h("button", { class: "em-mute", onclick: () => { muted = true; stopSiren(); } }, "Mute sound")),
+      h("div", { class: "em-list" }, list.map((a) => {
+        const k = EMERGENCY[a.kind];
+        return h("section", { class: `em-item k-${a.kind}` },
+          a.snapshot_path ? h("img", { src: `/api/snapshots/${a.snapshot_path}`, alt: `What camera ${a.camera_name || ""} saw` }) : null,
+          h("div", { class: "em-text" },
+            h("div", { class: "em-kind" }, `${k.icon} ${k.title}`),
+            h("p", {}, a.message),
+            h("p", { class: "em-when" }, `${a.camera_name ? `Camera: ${a.camera_name} · ` : ""}${new Date(a.created_at * 1000).toLocaleTimeString()}`),
+            h("div", { class: "em-actions" },
+              a.camera_id ? h("button", { onclick: () => go("live") }, "Watch the camera") : null,
+              h("button", { class: "em-ok", onclick: async (e) => {
+                e.currentTarget.disabled = true;
+                try { await post(`/api/alerts/${a.id}/ack`); } catch (x) { fail(x); }
+                pollAlerts(true);
+              } }, a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"))));
+      })),
+      h("p", { class: "em-foot" }, "Check the camera and send help or call the emergency services (Tanzania: 114 fire and rescue, 112 general). CAMS can be wrong: it is a warning, not a fire alarm.")));
+  }
+  overlay.classList.remove("hidden"); document.body.classList.add("in-emergency");
+  startSiren();
+}
+
+let pollTimer = null;
+async function pollAlerts(now = false) {
   if (!state.user) return;
+  clearTimeout(pollTimer);
   try {
+    showEmergencies(await get("/api/alerts/emergencies"));
     const open = await get("/api/alerts?open_only=true&limit=20");
     alertBadge.textContent = open.length >= 20 ? "20+" : String(open.length);
     alertBadge.classList.toggle("hidden", open.length === 0);
@@ -206,7 +281,7 @@ async function pollAlerts() {
     }
     state.alertsSeen = Math.max(state.alertsSeen, newest) || -1;
   } catch { /* signed out or offline: ignore */ }
-  setTimeout(pollAlerts, 5000);
+  pollTimer = setTimeout(pollAlerts, 3000);
 }
 
 boot();
