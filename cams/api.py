@@ -883,6 +883,11 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             raise HTTPException(404, "Camera not found.")
         if body.get("after_hours") and not _hours_ok(body["after_hours"]):
             raise HTTPException(400, "Closed hours must look like 18:00-06:00.")
+        try:
+            if "down_seconds" in body and not 5 <= float(body["down_seconds"]) <= 600:
+                raise HTTPException(400, "Person down: choose 5 to 600 seconds.")
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Person down: enter a number of seconds.")
         db.execute("UPDATE cameras SET analytics = ? WHERE id = ?", (json.dumps(parse_analytics(body)), cid))
         sysm.refresh_areas()
         db.audit(user["username"], "camera_analytics", {"id": cid, **parse_analytics(body)})
@@ -1363,9 +1368,24 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         sql += " ORDER BY a.created_at DESC LIMIT ?"
         return db.query(sql, (min(limit, 1000),))
 
+    @app.get("/api/alerts/emergencies")
+    def open_emergencies(user=viewer):
+        """Open fire / smoke / person-down alerts: every CAMS window shows these full screen."""
+        return db.query(
+            "SELECT a.*, c.name AS camera_name FROM alerts a LEFT JOIN cameras c ON c.id = a.camera_id "
+            "WHERE a.acknowledged = 0 AND a.kind IN ('fire', 'smoke', 'person_down', 'emergency_test') "
+            "ORDER BY a.created_at DESC LIMIT 20")
+
     @app.post("/api/alerts/{aid}/ack")
     def ack(aid: int, user=viewer):
         db.execute("UPDATE alerts SET acknowledged = 1 WHERE id = ?", (aid,))
+        return {"ok": True}
+
+    @app.post("/api/alerts/test-emergency")
+    def test_emergency(user=admin):
+        """Try the emergency warning: the red screen and the alarm on every CAMS window and this PC."""
+        sysm._alert("emergency_test", "TEST of the emergency alarm. Nothing is wrong: press I'm handling it to stop it.", None, None, None)
+        db.audit(user["username"], "emergency_test")
         return {"ok": True}
 
     @app.post("/api/alerts/ack-all")
@@ -1379,7 +1399,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
                 "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
                 "recording_max_gb", "colour_enhance", "colour_refresh", "speed_mode", "route_hours", "alert_days",
-                "min_free_gb", "tiles_max_mb"}
+                "min_free_gb", "tiles_max_mb", "emergency_sensitivity", "alarm_sound"}
     PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
     @app.get("/api/settings")
@@ -1407,6 +1427,10 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Keep alerts for 1 to 3650 days (0 = keep).")
             if "route_hours" in values and not 0 <= float(values["route_hours"]) <= 24 * 3650:
                 raise HTTPException(400, "Keep routes for 1 hour or more (0 = keep).")
+            if "emergency_sensitivity" in values and values["emergency_sensitivity"] not in ("low", "normal", "high"):
+                raise HTTPException(400, "Emergency sensitivity must be low, normal or high.")
+            if "alarm_sound" in values and str(values["alarm_sound"]) not in ("0", "1"):
+                raise HTTPException(400, "Alarm sound must be on or off.")
             if "speed_mode" in values and values["speed_mode"] not in ("auto", "fast", "balanced", "detailed"):
                 raise HTTPException(400, "Face AI speed must be auto, fast, balanced or detailed.")
             if "min_free_gb" in values and not 0 <= float(values["min_free_gb"]) <= 1000:

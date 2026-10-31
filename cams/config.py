@@ -118,6 +118,10 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "blur_unknown": "1",
     # Save a small face snapshot with each sighting.
     "save_snapshots": "1",
+    # Emergencies (fire, smoke, person down): how easily they trigger (low | normal | high),
+    # and whether this PC sounds an alarm when one happens.
+    "emergency_sensitivity": "normal",
+    "alarm_sound": "1",
     # Face AI speed: auto (fast on PCs with 4 or fewer cores) | fast | balanced | detailed.
     "speed_mode": "auto",
     # Number of recognition worker threads (0 = automatic).

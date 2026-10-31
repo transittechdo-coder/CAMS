@@ -606,20 +606,31 @@ function activityDialog(cam, after) {
     h("div", { class: "row" }, h("input", { type: "time", name: "from", value: from || "18:00" }), "and", h("input", { type: "time", name: "to", value: to || "06:00" })),
     h("p", { class: "hint", style: { margin: 0 } }, "Closed hours can also be set for a whole building in the Campus builder."),
     h("label", { class: "check" }, h("input", { type: "checkbox", name: "tamper", checked: a.tamper !== false }), "Alert when the camera is covered, blurred or turned away"),
+    h("h3", { style: { margin: "10px 0 0" } }, "Emergencies"),
+    h("p", { class: "hint", style: { margin: 0 } }, "These cover the whole screen in red with an alarm until someone answers. Turn fire off for a kitchen camera that sees cooking fires."),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "fire", checked: a.fire !== false }), "Fire: flickering flames"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "smoke", checked: a.smoke !== false }), "Heavy smoke: a grey haze that hides the view"),
+    h("label", { class: "check" }, h("input", { type: "checkbox", name: "person_down", checked: a.person_down !== false }), "Person down: someone lying on the ground (fainted, fallen, hurt)"),
+    field("Person down: alert after (seconds)", h("input", { name: "down_seconds", type: "number", min: 5, max: 600, value: a.down_seconds || 20, style: { maxWidth: "140px" } }),
+      "After a fall (standing, then suddenly on the ground) CAMS alerts sooner, after 8 seconds. Beds and sofas, and dormitories, do not count."),
   );
   dialog({ title: `Activity detection: ${cam.name}`, body, actions: [{ label: "Cancel" }, { label: "Save rules", class: "primary", run: async () => {
     const v = formValues(body);
     await put(`/api/cameras/${cam.id}/analytics`, {
       people: v.people, loiter_minutes: +v.loiter_minutes || 0, crowd_count: +v.crowd_count || 0, running: v.running,
       after_hours: v.after_on ? `${v.from}-${v.to}` : "", tamper: v.tamper,
+      fire: v.fire, smoke: v.smoke, person_down: v.person_down, down_seconds: +v.down_seconds || 20,
     });
     toast("Activity rules saved"); after();
   } }] });
 }
 
 function ruleTags(a) {
-  if (!a || a.people === false) return [];
+  if (!a) return [];
   const t = [];
+  const em = [a.fire !== false && "fire", a.smoke !== false && "smoke", a.person_down !== false && "person down"].filter(Boolean);
+  if (em.length) t.push(em.join(" · "));
+  if (a.people === false) return t;
   if (a.loiter_minutes) t.push(`loiter ${a.loiter_minutes} min`);
   if (a.crowd_count) t.push(`crowd ${a.crowd_count}+`);
   if (a.running) t.push("running");
@@ -1188,6 +1199,7 @@ async function alerts(el) {
     watchlist: ["Watch list", "amber"], unknown_restricted: ["Restricted camera", "red"], access_violation: ["Not allowed here", "red"],
     camera_offline: ["Camera offline", ""], tamper: ["Camera tampering", "red"], after_hours: ["After hours", "amber"],
     loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"], running: ["Running", "amber"],
+    fire: ["FIRE", "red"], smoke: ["Heavy smoke", "red"], person_down: ["Person down", "red"], emergency_test: ["Alarm test", ""],
   };
   const big = (src) => dialog({ title: "Alert picture", wide: true, body: h("img", { src, alt: "Alert picture", style: { width: "100%", borderRadius: "6px" } }) });
   async function load() {
@@ -1240,6 +1252,20 @@ async function settings(el) {
     h("div", { class: "grid3" },
       field("Space for recordings (GB)", h("input", { name: "recording_max_gb", type: "number", min: 1, max: 20000, value: s.recording_max_gb, disabled: dis }), "When full, the oldest videos are deleted first. Videos marked Keep are never deleted automatically.")),
   );
+
+  // ---- emergencies: fire, smoke, person down
+  const emerg = h("div", { class: "stack" },
+    h("p", { class: "muted", style: { margin: 0 } }, "Every camera watches for fire, heavy smoke and a person lying on the ground (turn them off per camera under Cameras → Activity rules). ",
+      "When one is seen, every CAMS window turns red with a siren until someone presses ", h("b", {}, "I'm handling it"), ". It is an early warning for a person to check: it never replaces smoke detectors or fire alarms."),
+    h("div", { class: "grid3" },
+      field("How easily it triggers", h("select", { name: "emergency_sensitivity", disabled: dis },
+        [["low", "Low: only big, clear fires and smoke"], ["normal", "Normal"], ["high", "High: small fires sooner (more false alarms)"]]
+          .map(([v, l]) => h("option", { value: v, selected: v === (s.emergency_sensitivity || "normal") }, l)))),
+      h("label", { class: "check" }, h("input", { type: "checkbox", name: "alarm_sound", checked: s.alarm_sound !== "0", disabled: dis }),
+        "Also beep on this computer's speakers (heard even when the CAMS window is closed)")),
+    admin ? h("div", { class: "row" }, h("button", { onclick: async () => {
+      try { await post("/api/alerts/test-emergency"); toast("Test alarm sent to every CAMS window"); } catch (e) { fail(e); }
+    } }, icon("alerts"), "Test the alarm")) : null);
 
   // ---- data and storage: what CAMS deletes by itself, and when
   const keepSel = (name, unit, opts) => {
@@ -1338,7 +1364,8 @@ async function settings(el) {
   );
   drawAi().catch(() => {});
   const saveRow = admin ? h("div", { class: "row end" }, h("button", { class: "primary", onclick: async () => {
-    const v = { ...formValues(rec), ...formValues(priv), ...formValues(video), ...formValues(data), ...formValues(colourOpts) };
+    const v = { ...formValues(rec), ...formValues(priv), ...formValues(emerg), ...formValues(video), ...formValues(data), ...formValues(colourOpts) };
+    v.alarm_sound = v.alarm_sound ? "1" : "0";
     v.colour_enhance = v.colour_enhance ? "1" : "0";
     v.blur_unknown = v.blur_unknown ? "1" : "0"; v.save_snapshots = v.save_snapshots ? "1" : "0"; v.sighting_clips = v.sighting_clips ? "1" : "0";
     try { await put("/api/settings", v); toast("Settings saved"); loadUsage(); } catch (e) { fail(e); }
@@ -1366,6 +1393,7 @@ async function settings(el) {
   el.append(head("Settings", null),
     section("Maps and mouse", h("p", { class: "muted", style: { margin: 0 } }, "Choose which mouse button moves the map (Overview, Find a person, Campus builder and 3D Map Studio). The middle button (wheel) always moves the map too."), mouse),
     section("Recognition", rec),
+    section("Emergencies: fire, smoke, person down", emerg),
     section("Privacy", priv),
     section("Data and storage", data),
     section("Video recordings and clips", video),

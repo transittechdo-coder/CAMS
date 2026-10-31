@@ -250,6 +250,33 @@ Open **Find a person** and type a name or ID number.
 - **Alerts** lists watch-list sightings, strangers on restricted cameras and offline cameras.
   New alerts also pop up in the corner. Press **Seen** when handled.
 
+### Emergencies: fire, smoke, person down
+
+Every camera watches for three emergencies, so help can come before it is too late:
+
+- **Fire:** flame-coloured areas (or glowing white ones on black-and-white night cameras) that
+  appear, flicker and stay in one place for a few seconds. An orange wall, a lamp or a red car does
+  not count.
+- **Heavy smoke:** a grey haze that hides part of what the camera normally sees, for several
+  seconds. Lights going off or the camera switching to night mode do not count.
+- **Person down:** someone lying on the ground for 20 seconds (choose the time per camera), or
+  8 seconds after a fall (standing, then suddenly on the ground). Uses the person-detection AI and,
+  when installed, the body-pose AI, so it works even when the face cannot be seen. Beds, sofas and
+  dormitories do not count.
+
+When one is seen, **every CAMS window turns red with a siren**, showing the camera's picture with the
+place marked, the camera and building, and the time. The computer running CAMS also beeps through its
+speakers, even if the window is closed. Press **Watch the camera** to look, then **I'm handling it**
+once someone is on the way. **Mute sound** stops the siren but keeps the red screen; a new emergency
+sounds again.
+
+- Turn any of the three off per camera in **Cameras → Activity rules** (for example fire for a
+  kitchen camera that sees cooking fires).
+- **Settings → Emergencies:** how easily they trigger (*Low*, *Normal*, *High*), the beep on this
+  computer, and **Test the alarm** to check every window shows it.
+- These are early warnings from cameras and can be wrong both ways. Keep smoke detectors, fire
+  alarms and a first-aid plan. Tanzania emergency numbers: **114** fire and rescue, **112** general.
+
 ## 7. Settings (admin)
 
 - **Match strictness:** if CAMS confuses two people, move it right; if it misses people, move it left.

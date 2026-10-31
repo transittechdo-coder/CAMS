@@ -24,6 +24,7 @@ import numpy as np
 import json
 
 from .activity import ActivityMonitor, PersonDetector, in_hours, parse_analytics
+from .emergency import EmergencyMonitor
 from .behaviour import BehaviourEngine
 from .insights import Insights
 from .cameras import OFFLINE_ALERT_SECONDS, CameraWorker, detect_kind
@@ -39,6 +40,7 @@ log = logging.getLogger("cams")
 
 UNKNOWN_SAME_PERSON = 0.50     # two unknown face prints this close = same stranger
 UNKNOWN_MEMORY_SECONDS = 120
+EMERGENCIES = ("fire", "smoke", "person_down", "emergency_test")
 # Speed-ups for the face AI
 REUSE_PRINT_S = 3.0            # a face that stays in the same place keeps its face print this long
 REUSE_IOU = 0.45               # ... if its box overlaps the earlier box this much
@@ -73,6 +75,8 @@ class CamsSystem:
         self.stats = {"frames_analysed": 0, "faces_seen": 0, "people_detected": 0, "started_at": time.time()}
         self.activity_ok = PersonDetector.available(paths.models)
         self.monitors: dict[int, ActivityMonitor] = {}
+        self.emergency: dict[int, EmergencyMonitor] = {}
+        self._alarm_at = 0.0
         self.camera_areas: dict[int, list[dict]] = {}
         self.camera_rules: dict[int, dict] = {}
         self.reload_gallery()
@@ -359,8 +363,8 @@ class CamsSystem:
         detector = getattr(engine, "person_detector", None)
         watch = self.behaviour is not None and self.setting("activity_ai") != "0"
         objects: list = []
-        if detector and (rules.get("people", True) or watch):
-            people, objects = detector.detect_scene(frame, objects=watch)
+        if detector and (rules.get("people", True) or watch or rules.get("person_down", True)):
+            people, objects = detector.detect_scene(frame, objects=watch or bool(rules.get("person_down", True)))
         else:
             people = []
         self.stats["people_detected"] += len(people)
@@ -369,6 +373,7 @@ class CamsSystem:
         for kind, msg in mon.analyse(frame, ts, people, rules, closed, worker.state.name):
             snap = self._save_frame(frame, faces)
             self._alert(kind, msg, None, worker.id, None, snap)
+        self._check_emergencies(worker, frame, ts, mon, people, objects, rules, faces)
         overlays = []
         for f in faces:
             pid, sim = self.gallery.match(f.embedding, threshold)
@@ -395,6 +400,72 @@ class CamsSystem:
         self.stats["frames_analysed"] += 1
         self.stats["faces_seen"] += len(faces)
         return overlays
+
+    # ================================================================ emergencies
+    def _check_emergencies(self, worker, frame, ts, mon, people, objects, rules, faces) -> None:
+        if not any(rules.get(k, True) for k in EMERGENCIES):
+            return
+        em = self.emergency.setdefault(worker.id, EmergencyMonitor())
+        sleeping = any((a.get("purpose") or "") == "dormitory" for a in self.camera_areas.get(worker.id, []))
+        tracks = list(mon.tracker.tracks.values()) if people is not None else None
+        try:
+            events = em.analyse(frame, ts, tracks, people, objects, rules, worker.state.name,
+                                self.setting("emergency_sensitivity") or "normal",
+                                tilt_of=lambda t: self._body_tilt(frame, t, ts), sleeping_place=sleeping)
+        except Exception:
+            log.exception("Emergency check failed on camera %s", worker.id)
+            return
+        for kind, msg, box in events:
+            if not mon._ready(kind, ts):
+                continue
+            place = ", ".join(a["name"] for a in self.camera_areas.get(worker.id, [])[:1])
+            if place:
+                msg = msg.replace(f"at {worker.state.name}", f"at {worker.state.name} ({place})", 1)
+            snap = self._save_frame(frame, faces, marks=[box])
+            self._alert(kind, msg, None, worker.id, None, snap)
+
+    def _body_tilt(self, frame, track, ts) -> float | None:
+        """How much a person's body leans (0 = upright, 1 = flat), from the body pose AI.
+        Only worked out for people whose shape could be lying, at most every 2 seconds."""
+        x, y, w, h = track.box[:4]
+        if w / max(1, h) < 0.75 or self.behaviour is None:
+            return None
+        cache = getattr(track, "_tilt", None)
+        if cache and ts - cache[0] < 2.0:
+            return cache[1]
+        tilt = None
+        est = self.behaviour.pose()
+        if est is not None:
+            try:
+                p = est.estimate(frame, (x, y, w, max(h, w)))
+            except Exception:
+                p = None
+            if p is not None:
+                P = p["world"]
+                torso = (P[11] + P[12]) / 2 - (P[23] + P[24]) / 2
+                tilt = float(np.degrees(np.arccos(np.clip(abs(torso[1]) / (np.linalg.norm(torso) + 1e-6), 0, 1)))) / 90
+        track._tilt = (ts, tilt)
+        return tilt
+
+    def sound_alarm(self) -> None:
+        """Beep on this PC's speakers (Windows), so people hear it even if the CAMS window is closed."""
+        if self.setting("alarm_sound") == "0" or time.time() - self._alarm_at < 20:
+            return
+        self._alarm_at = time.time()
+
+        def beep():
+            try:
+                import winsound
+            except ImportError:
+                return
+            try:
+                for _ in range(6):
+                    winsound.Beep(1200, 350)
+                    winsound.Beep(800, 350)
+            except Exception:
+                pass
+
+        threading.Thread(target=beep, name="alarm", daemon=True).start()
 
     # ================================================================ sightings
     def _unknown_key(self, cam_id: int, emb: np.ndarray, ts: float) -> str:
@@ -470,14 +541,22 @@ class CamsSystem:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (time.time(), kind, message, person_id, camera_id, sighting_id, snapshot),
         )
+        if kind in EMERGENCIES:
+            log.warning("EMERGENCY %s: %s", kind, message)
+            self.sound_alarm()
 
-    def _save_frame(self, frame: np.ndarray, faces) -> str | None:
-        """Whole-scene picture for an activity alert, with strangers' faces blurred."""
+    def _save_frame(self, frame: np.ndarray, faces, marks=None) -> str | None:
+        """Whole-scene picture for an activity alert, with strangers' faces blurred
+        and the place of an emergency marked with a red box."""
         img = frame.copy()
         if self.setting("blur_unknown") == "1":
             for f in faces:
                 if f.person_id is None:
                     blur_region(img, f.box)
+        for b in marks or []:
+            x, y, w, h = (int(v) for v in b[:4])
+            t = max(2, img.shape[1] // 300)
+            cv2.rectangle(img, (x - 4, y - 4), (x + w + 4, y + h + 4), (0, 0, 255), t)
         h, w = img.shape[:2]
         if w > 960:
             img = cv2.resize(img, (960, int(h * 960 / w)))

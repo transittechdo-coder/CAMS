@@ -62,6 +62,7 @@ was last seen, their path on a 2D or 3D map of the campus, and a timeline of the
 | **Your mouse** | Choose which mouse button moves the map: swap left and right in Settings. |
 | **Restricted areas** | Per building or zone: only some people may enter (by type, class or name), or some may not, and closed hours. |
 | **Unusual situations** | A person-detection AI flags loitering, crowds, running, people present during closed hours, and cameras that are covered, blurred or turned away. |
+| **Emergencies** | Every camera watches for **fire** (flickering flames, also on black-and-white night cameras), **heavy smoke** and a **person down** (someone lying on the ground after fainting or a fall). Every CAMS window turns red with a siren and the picture until someone presses *I'm handling it*, and the CAMS PC beeps. Works offline, no extra downloads. An early warning, not a replacement for smoke detectors. |
 | **Alerts** | Rule breaks, watch-list people, strangers on restricted cameras, unusual situations and offline cameras, each with a picture. |
 | **Privacy** | Strangers are blurred, consent is recorded, old records delete themselves, one button erases a person, roles and an activity log. Nothing leaves the PC. |
 

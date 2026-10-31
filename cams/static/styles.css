@@ -597,3 +597,28 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .studio .st-view .holo-legend { top: auto; bottom: 0; border-bottom: 0; border-top: 1px solid rgba(63, 244, 255, .14); padding-right: 14px; }
 .studio .st-view .holo-info { bottom: 46px; }
 .studio .st-view .holo-spin { top: 64px; }
+
+/* ---------------------------------------------------------------- emergency (fire, smoke, person down) */
+.emergency { position: fixed; inset: 0; z-index: 9999; display: grid; place-items: center; padding: 16px;
+  background: rgba(120, 10, 10, .78); animation: em-flash 1s steps(2, jump-none) infinite; overflow-y: auto; }
+.emergency.hidden { display: none; }
+@keyframes em-flash { 50% { background: rgba(190, 20, 20, .86); } }
+@media (prefers-reduced-motion: reduce) { .emergency { animation: none; } .em-pulse { animation: none !important; } }
+.em-box { width: min(980px, 100%); background: #fff; color: #1b1b1b; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,.5); overflow: hidden; }
+.em-head { display: flex; align-items: center; gap: 14px; background: #b3140f; color: #fff; padding: 14px 20px; }
+.em-head h1 { margin: 0; flex: 1; font: 800 30px/1.1 var(--display, system-ui); letter-spacing: .06em; }
+.em-pulse { width: 18px; height: 18px; border-radius: 50%; background: #fff; animation: em-pulse 1s ease-in-out infinite; }
+@keyframes em-pulse { 50% { transform: scale(.55); opacity: .5; } }
+.em-mute { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.7); }
+.em-list { display: grid; gap: 1px; background: #e6d2d0; max-height: 70vh; overflow-y: auto; }
+.em-item { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; padding: 18px 20px; background: #fff; }
+.em-item img { width: 100%; border-radius: 6px; background: #222; }
+.em-kind { font: 800 20px var(--display, system-ui); color: #b3140f; letter-spacing: .04em; }
+.em-item.k-emergency_test .em-kind { color: #0f6e6a; }
+.em-text p { margin: 8px 0; font-size: 16px; line-height: 1.45; }
+.em-when { color: #5a5a5a; font-size: 14px !important; }
+.em-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.em-actions button { font-size: 16px; padding: 10px 16px; }
+.em-ok { background: #b3140f; color: #fff; border-color: #b3140f; font-weight: 700; }
+.em-foot { margin: 0; max-width: none; padding: 12px 20px; background: #fbeeed; color: #5b1410; font-size: 14px; }
+@media (max-width: 700px) { .em-item { grid-template-columns: 1fr; } .em-head h1 { font-size: 22px; } }
