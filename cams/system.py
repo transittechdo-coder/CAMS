@@ -37,6 +37,7 @@ from .geo import TileCache
 from .health import Health
 from .visitors import Visitors
 from .plates import Plates
+from .phones import Phones
 from .recorder import Recorder
 
 log = logging.getLogger("cams")
@@ -94,6 +95,7 @@ class CamsSystem:
         self.health = Health(self)
         self.visitors = Visitors(self)
         self.plates = Plates(self)
+        self.phones = Phones(self)
 
     # ================================================================ lifecycle
     def start(self) -> None:

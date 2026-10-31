@@ -301,6 +301,8 @@ def _main(argv: list[str] | None = None) -> int:
     _splash("Connecting cameras...")
     system.start()
     app = create_app(system)
+    if lan:
+        system.phones.start_discovery(port)       # the CAMS Guard app finds this PC by itself
     # log_config=None: use our own logging (uvicorn's default needs a console)
     config = uvicorn.Config(app, host=host, port=port, log_level="warning", access_log=False, log_config=None)
     server = uvicorn.Server(config)

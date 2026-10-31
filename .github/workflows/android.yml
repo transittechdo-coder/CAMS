@@ -1,0 +1,107 @@
+name: Android app
+
+# Builds CAMS Guard (android/) into CAMS-Guard.apk. Runs on pull requests, and is called by
+# "Build Windows installer", which puts the app inside CAMS and attaches it to the release.
+on:
+  pull_request:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Build CAMS Guard
+        working-directory: android
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE }}
+          CAMS_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          ver=$(python3 -c "import re;print(re.search(r'__version__ = \"(.+?)\"', open('../cams/__init__.py').read()).group(1))")
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/cams-guard.jks"
+            export CAMS_KEYSTORE="$RUNNER_TEMP/cams-guard.jks"
+          else
+            echo "::warning::No signing key in the secrets ANDROID_KEYSTORE / ANDROID_KEYSTORE_PASSWORD: using the TEST key in android/test-signing.jks. Fine for testing; add the real key before giving the app to customers."
+            export CAMS_KEYSTORE="$PWD/test-signing.jks"
+            export CAMS_KEYSTORE_PASSWORD="camsguard-test"
+          fi
+          gradle assembleRelease -PcamsVersion="$ver" --no-daemon --stacktrace
+          cp app/build/outputs/apk/release/app-release.apk ../CAMS-Guard.apk
+          ls -la ../CAMS-Guard.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CAMS-Guard
+          path: CAMS-Guard.apk
+          retention-days: 30
+
+  # Pull requests: run the app on an Android emulator against a real CAMS server and save
+  # screenshots to the branch "android-test-screens".
+  emulator:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+      - name: Build the test app
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+      - name: Start CAMS
+        run: |
+          pip install -r requirements.txt
+          export CAMS_DATA_DIR="$RUNNER_TEMP/camsdata"
+          echo "CAMS_DATA_DIR=$CAMS_DATA_DIR" >> "$GITHUB_ENV"
+          CAMS_LAN=1 nohup python -m cams --no-window --port 8765 > "$RUNNER_TEMP/cams.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf http://127.0.0.1:8765/api/status && break; sleep 2; done
+          curl -s -X POST http://127.0.0.1:8765/api/setup -H 'content-type: application/json' -d '{"site_name":"Mikocheni School","username":"admin","password":"secret123"}'
+          curl -s -c /tmp/ck -X POST http://127.0.0.1:8765/api/login -H 'content-type: application/json' -d '{"username":"admin","password":"secret123"}'
+          code=$(curl -s -b /tmp/ck -X POST http://127.0.0.1:8765/api/phones/code -H 'content-type: application/json' -d '{"new_guard":"Hamisi Juma"}' | python -c "import sys,json;print(json.load(sys.stdin)['code'])")
+          echo "QR=http://10.0.2.2:8765/guard#pair=$code&h=10.0.2.2&p=8765" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: OUT=shots bash android/ci/emulator-test.sh
+      - name: Save screenshots
+        if: always()
+        run: |
+          tail -40 "$RUNNER_TEMP/cams.log" || true
+          [ -d shots ] || exit 0
+          git config user.name "CAMS build"; git config user.email "build@users.noreply.github.com"
+          git fetch origin android-test-screens || true
+          git checkout -B android-test-screens
+          cp "$RUNNER_TEMP/cams.log" shots/cams-log.txt 2>/dev/null || true
+          git rm -rq --cached . ; rm -rf saved; mkdir saved; cp shots/* saved/ 2>/dev/null || true
+          git add -f saved/*
+          git commit -qm "Emulator screenshots for ${GITHUB_SHA}" && git push -f origin android-test-screens
