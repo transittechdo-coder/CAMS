@@ -305,10 +305,19 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     paths = sysm.paths
 
     # ------------------------------------------------------------ auth deps
+    def _token(request: Request) -> str | None:
+        """The sign-in: the browser's cookie, or the CAMS Guard app's "Authorization: Bearer" header."""
+        h = request.headers.get("authorization", "")
+        if h.lower().startswith("bearer "):
+            return h[7:].strip()
+        return request.cookies.get(COOKIE)
+
     def current_user(request: Request) -> dict:
-        user = auth.user_for_token(db, request.cookies.get(COOKIE))
+        token = _token(request)
+        user = auth.user_for_token(db, token)
         if not user:
             raise HTTPException(401, "Please sign in.")
+        sysm.phones.touch(token)
         return user
 
     def need(role: str):
@@ -335,7 +344,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     # ------------------------------------------------------------ status / setup
     @app.get("/api/status")
     def status(request: Request):
-        user = auth.user_for_token(db, request.cookies.get(COOKIE))
+        user = auth.user_for_token(db, _token(request))
         return {
             "app": "CAMS",
             "name": APP_FULL_NAME,
@@ -1554,7 +1563,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return v
 
     @app.post("/api/visitors/{vid}/checkout")
-    def check_out_visitor(vid: int, user=operator):
+    def check_out_visitor(vid: int, user=viewer):          # guards at the gate check visitors out
         try:
             v = sysm.visitors.check_out(vid, user["username"])
         except LookupError as exc:
@@ -1922,6 +1931,68 @@ def create_app(sysm: CamsSystem) -> FastAPI:
         return response
 
     app.mount("/static", StaticFiles(directory=static), name="static")
+
+    # ------------------------------------------------------------ guards' phones (CAMS Guard app)
+    @app.post("/api/phones/code")
+    def phone_code(body: dict, request: Request, user=admin):
+        """A QR code that connects one guard's phone, valid for 15 minutes."""
+        import segno
+
+        uid = body.get("user_id")
+        name = (body.get("new_guard") or "").strip()
+        if name:
+            base = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".")[:30] or "guard"
+            username, n = base, 1
+            while db.one("SELECT id FROM users WHERE username = ?", (username,)):
+                n += 1
+                username = f"{base}{n}"
+            uid = auth.create_user(db, username, uuid.uuid4().hex, "viewer", name)
+            db.audit(user["username"], "user_add", {"username": username, "role": "viewer", "for": "phone"})
+        if not uid or not db.one("SELECT id FROM users WHERE id = ?", (uid,)):
+            raise HTTPException(400, "Choose the guard who will use this phone.")
+        c = sysm.phones.new_code(int(uid))
+        port = request.url.port or 8765
+        hosts = _lan_addresses()
+        first = hosts[0] if hosts else "127.0.0.1"
+        url = f"http://{first}:{port}/guard#pair={c['code']}&h={','.join(hosts)}&p={port}"
+        return {"code": c["code"], "expires": c["expires"], "url": url, "hosts": hosts, "port": port,
+                "qr": segno.make(url, error="m").svg_inline(scale=6, dark="#10202b"),
+                "user": db.one("SELECT id, username, full_name FROM users WHERE id = ?", (uid,)),
+                "listening": os.environ.get("CAMS_BIND", "127.0.0.1") == "0.0.0.0"}
+
+    @app.post("/api/phones/pair")
+    def phone_pair(body: dict, response: Response):
+        try:
+            r = sysm.phones.pair(body.get("code", ""), body.get("device", ""))
+        except PermissionError as exc:
+            time.sleep(0.5)
+            raise HTTPException(403, str(exc))
+        response.set_cookie(COOKIE, r["token"], httponly=True, samesite="strict", max_age=r["days"] * 86400)
+        db.audit(r["user"]["username"], "phone_connected", {"phone": body.get("device", "")})
+        return r
+
+    @app.get("/api/phones")
+    def phone_list(user=admin):
+        return sysm.phones.listing()
+
+    @app.delete("/api/phones/{phone_id}")
+    def phone_remove(phone_id: int, user=admin):
+        sysm.phones.remove(phone_id)
+        db.audit(user["username"], "phone_removed", {"id": phone_id})
+        return {"ok": True}
+
+    @app.api_route("/app/CAMS-Guard.apk", methods=["GET", "HEAD"])
+    def guard_apk():
+        """The Android app, served by this PC so phones need no internet to install it."""
+        apk = static / "app" / "CAMS-Guard.apk"
+        if not apk.is_file():
+            raise HTTPException(404, "The Android app is not in this CAMS installation.")
+        return FileResponse(apk, media_type="application/vnd.android.package-archive", filename="CAMS-Guard.apk")
+
+    @app.get("/api/phones/app")
+    def guard_apk_info(user=viewer):
+        apk = static / "app" / "CAMS-Guard.apk"
+        return {"available": apk.is_file(), "size": apk.stat().st_size if apk.is_file() else 0}
 
     @app.get("/guard")
     def guard_page():

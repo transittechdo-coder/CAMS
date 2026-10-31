@@ -15,7 +15,16 @@ permissions:
   contents: write
 
 jobs:
+  # The Android app (CAMS Guard) is built first: it goes inside CAMS so phones can install it
+  # from the CAMS computer without internet, and it is attached to the release too.
+  android:
+    if: github.event_name != 'release'
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
   build:
+    needs: android
+    if: always() && (needs.android.result == 'success' || needs.android.result == 'skipped')
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -30,6 +39,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt pillow
+
+      - name: Get the Android app (CAMS Guard)
+        if: needs.android.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: CAMS-Guard
+          path: cams/static/app
 
       - name: Download face models
         run: python scripts/download_models.py
@@ -170,13 +186,16 @@ jobs:
 
           If Windows shows "Windows protected your PC", click **More info** then **Run anyway** (the installer is not code-signed).
 
+          **CAMS-Guard.apk** is the Android app for guards' phones. You do not need to download it here: phones get it from the CAMS computer (Settings, Phones, Add a phone).
+
           Built and tested automatically from commit ${{ github.sha }}.
           "@
+          $apk = @(Get-ChildItem cams/static/app/CAMS-Guard.apk -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $versioned $stable --clobber
+            gh release upload $tag $versioned $stable @apk --clobber
           } else {
-            gh release create $tag $versioned $stable --title "CAMS $ver" --notes $notes --latest --target ${{ github.sha }}
+            gh release create $tag $versioned $stable @apk --title "CAMS $ver" --notes $notes --latest --target ${{ github.sha }}
           }
           if ($LASTEXITCODE -ne 0) { throw "Could not publish the release" }
           Write-Host "Published $tag"

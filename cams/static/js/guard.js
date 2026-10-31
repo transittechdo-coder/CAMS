@@ -50,8 +50,12 @@ function showLogin(msg = "") {
 
 // ------------------------------------------------------------------ siren
 function unlockAudio() { if (!audio) try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+// Inside the CAMS Guard app the phone itself rings (also when locked), so the page stays quiet.
+const IN_APP = /CAMSGuardApp/.test(navigator.userAgent);
+const ANDROID = /Android/i.test(navigator.userAgent);
+
 function startSiren() {
-  if (siren || muted || !audio) return;
+  if (IN_APP || siren || muted || !audio) return;
   audio.resume?.();
   const o = audio.createOscillator(), g = audio.createGain();
   o.type = "square"; g.gain.value = 0.15; o.connect(g).connect(audio.destination); o.start();
@@ -202,4 +206,31 @@ async function find() {
 }
 
 document.addEventListener("pointerdown", unlockAudio);
-api("/api/status").then((st) => (st.user ? start() : showLogin())).catch(() => showLogin("CAMS is not reachable. Is the CAMS computer on?"));
+// ------------------------------------------------------------------ connect by QR code
+function pairingCode() {
+  const m = /pair=([A-Z0-9]+)/i.exec(location.hash || "");
+  return m ? m[1].toUpperCase() : null;
+}
+async function pairHere(code) {
+  try {
+    await api("/api/phones/pair", { method: "POST", body: { code, device: ANDROID ? "Android phone (browser)" : "Phone (browser)" } });
+    history.replaceState(null, "", "/guard");
+    await start();
+  } catch (x) { showLogin(x.message); }
+}
+async function showConnect(code) {
+  let apk = false;
+  try { apk = (await fetch("/app/CAMS-Guard.apk", { method: "HEAD" })).ok; } catch {}
+  if (!ANDROID || !apk) return pairHere(code);
+  app.replaceChildren(h("div", { class: "login" },
+    h("h1", {}, "Connect this phone"),
+    h("div", { class: "card" },
+      h("p", { style: "margin-top:0" }, h("b", {}, "Best: install the CAMS Guard app."), " The phone then rings for fire, smoke or a person down, even when it is locked."),
+      h("a", { href: "/app/CAMS-Guard.apk", download: "CAMS-Guard.apk" }, h("button", { class: "primary", style: "width:100%" }, "1. Install the app")),
+      h("p", { class: "muted" }, "If the phone asks, allow installing apps from this browser. Then open CAMS Guard and press Scan the code, and point it at the same code on the CAMS computer.")),
+    h("button", { style: "width:100%;margin-top:8px", onclick: () => pairHere(code) }, "Or use this page instead")));
+}
+
+const code = pairingCode();
+if (code) showConnect(code);
+else api("/api/status").then((st) => (st.user ? start() : showLogin())).catch(() => showLogin("CAMS is not reachable. Is the CAMS computer on?"));

@@ -1278,25 +1278,62 @@ async function settings(el) {
       try { await post("/api/alerts/test-emergency"); toast("Test alarm sent to every CAMS window"); } catch (e) { fail(e); }
     } }, icon("alerts"), "Test the alarm")) : null);
 
-  // ---- phones: the guard view over the site's Wi-Fi
+  // ---- phones: guards' phones over the site's Wi-Fi (CAMS Guard app or the phone's browser)
   const phones = h("div", { class: "stack" });
   async function drawPhones() {
-    if (!admin) { phones.replaceChildren(h("p", { class: "hint" }, "Ask an admin to turn on phone access.")); return; }
-    const n = await get("/api/network");
+    if (!admin) { phones.replaceChildren(h("p", { class: "hint" }, "Ask an admin to connect phones.")); return; }
+    const [n, list, appInfo] = await Promise.all([get("/api/network"), get("/api/phones"), get("/api/phones/app")]);
     const box = h("input", { type: "checkbox", checked: n.on });
     box.addEventListener("change", async () => {
-      try { await put("/api/settings", { lan_access: box.checked ? "1" : "0" }); toast(box.checked ? "Phone access on: restart CAMS to start it." : "Phone access off: restart CAMS to stop it."); drawPhones(); }
+      try { await put("/api/settings", { lan_access: box.checked ? "1" : "0" }); toast(box.checked ? "Phones allowed: close CAMS and open it again." : "Phones not allowed: close CAMS and open it again."); drawPhones(); }
       catch (e) { box.checked = !box.checked; fail(e); }
     });
+    const ready = n.on && n.listening;
     phones.replaceChildren(...[
-      h("p", { class: "muted", style: { margin: 0 } }, "Guards can open CAMS on their phones over this site's Wi-Fi: alerts with the red emergency screen and siren, cameras, visitors inside, and find a person. They sign in with their own CAMS account. Nothing goes over the internet."),
-      h("label", { class: "check" }, box, "Let phones and other computers on this network open CAMS"),
-      n.restart_needed ? h("div", { class: "banner amber" }, n.on ? "Close CAMS and open it again to let phones in." : "Close CAMS and open it again to stop phone access.") : null,
-      n.on && n.listening && n.addresses.length ? h("div", { class: "row", style: { flexWrap: "wrap", gap: "20px", alignItems: "flex-start" } }, n.addresses.map((a) => h("div", { class: "stack", style: { alignItems: "center" } },
-        h("div", { class: "qr", html: a.qr, role: "img", "aria-label": `QR code for ${a.url}` }),
-        h("b", { class: "num" }, a.url), h("button", { class: "small", style: { alignSelf: "center" }, onclick: () => copyText(a.url, "Address copied") }, icon("copy"), "Copy")))) : null,
-      n.on && n.listening ? h("p", { class: "hint", style: { margin: 0 } }, "On the phone, connect to the same Wi-Fi, scan the code with the camera, and add the page to the home screen. Keep the page open on the guard's phone: emergencies sound only while it is open. If phones cannot connect, allow CAMS through the Windows firewall (Windows asks the first time; choose Private networks).") : null,
+      h("p", { class: "muted", style: { margin: 0 } }, "Guards get alerts on their phones over this site's Wi-Fi. With the CAMS Guard app (Android) the phone rings for fire, smoke or a person down even when it is locked in a pocket. Nothing goes over the internet."),
+      h("label", { class: "check" }, box, "Allow phones on this network"),
+      n.restart_needed ? h("div", { class: "banner amber" }, n.on ? "Close CAMS and open it again so phones can connect." : "Close CAMS and open it again to stop phone access.") : null,
+      ready ? h("div", { class: "row" }, h("button", { class: "primary", onclick: () => addPhone() }, icon("phone"), "Add a phone"),
+        appInfo.available ? h("span", { class: "hint" }, `The Android app comes with CAMS (${fmtSize(appInfo.size)}): the phone downloads it from this computer.`) : null) : null,
+      list.length ? h("table", { class: "list" }, h("thead", {}, h("tr", {}, ["Phone", "Guard", "Last seen", ""].map((t) => h("th", {}, t)))),
+        h("tbody", {}, list.map((ph) => h("tr", {},
+          h("td", {}, h("b", {}, ph.name)), h("td", {}, ph.full_name || ph.username),
+          h("td", {}, Date.now() / 1000 - ph.last_seen < 120 ? h("span", { class: "tag teal" }, "Connected now") : ago(ph.last_seen)),
+          h("td", {}, h("button", { class: "small danger", onclick: async () => {
+            if (!(await confirmBox(`Disconnect ${ph.name}?`, "Use this when a phone is lost or a guard leaves. The phone stops getting alerts at once.", "Disconnect"))) return;
+            await del(`/api/phones/${ph.id}`); drawPhones();
+          } }, "Disconnect")))))) : null,
     ].filter(Boolean));
+  }
+
+  async function addPhone() {
+    const users = await get("/api/users");
+    const who = h("select", { name: "user_id" }, h("option", { value: "" }, "New guard..."), users.map((u) => h("option", { value: u.id }, `${u.full_name || u.username} (${u.role})`)));
+    const newName = h("input", { name: "new_guard", placeholder: "Guard's name, e.g. Hamisi Juma" });
+    const nameRow = field("New guard's name", newName);
+    who.addEventListener("change", () => nameRow.classList.toggle("hidden", !!who.value));
+    const body = h("div", { class: "stack" }, field("Who will use this phone?", who), nameRow,
+      h("p", { class: "hint", style: { margin: 0 } }, "A new guard can only watch: alerts, cameras, visitors and find a person. They never need a password: the phone is connected by the QR code."));
+    dialog({ title: "Add a phone", body, actions: [{ label: "Cancel" }, { label: "Show the QR code", class: "primary", run: async () => {
+      const r = await post("/api/phones/code", who.value ? { user_id: Number(who.value) } : { new_guard: newName.value });
+      showCode(r);
+    } }] });
+  }
+
+  function showCode(r) {
+    const left = h("span", { class: "num" });
+    const tick = () => { const s = Math.max(0, Math.round(r.expires - Date.now() / 1000)); left.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+    tick();
+    const t = setInterval(tick, 1000);
+    const steps = h("ol", { class: "big-steps" },
+      h("li", {}, "Connect the phone to this site's Wi-Fi."),
+      h("li", {}, h("b", {}, "Phone has CAMS Guard: "), "open it and press ", h("b", {}, "Scan the code"), ", then point it at this code."),
+      h("li", {}, h("b", {}, "No app yet: "), "open the phone's camera and point it at this code. Press the link that appears, then ", h("b", {}, "Install the app"), "."));
+    dialog({ title: `Connect a phone for ${r.user.full_name || r.user.username}`, wide: true, onClose: () => { clearInterval(t); drawPhones(); },
+      body: h("div", { class: "pair-box" }, h("div", { class: "qr big", html: r.qr, role: "img", "aria-label": "QR code to connect the phone" }),
+        h("div", { class: "stack" }, steps, h("p", { class: "hint", style: { margin: 0 } }, "This code works for ", left, " minutes, for this guard only."),
+          h("p", { class: "hint", style: { margin: 0 } }, `Address: ${r.url.split("#")[0]}`))),
+      actions: [{ label: "Done", class: "primary" }] });
   }
   drawPhones().catch(() => {});
 
@@ -1429,7 +1466,7 @@ async function settings(el) {
     section("Maps and mouse", h("p", { class: "muted", style: { margin: 0 } }, "Choose which mouse button moves the map (Overview, Find a person, Campus builder and 3D Map Studio). The middle button (wheel) always moves the map too."), mouse),
     section("Recognition", rec),
     section("Emergencies: fire, smoke, person down", emerg),
-    section("Phones: guard view over Wi-Fi", phones),
+    section("Phones", phones),
     section("Privacy", priv),
     section("Data and storage", data),
     section("Video recordings and clips", video),

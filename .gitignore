@@ -16,3 +16,6 @@ models/*.onnx
 data/
 snapshots/
 enrollments/
+
+# The Android app is built by GitHub and put here when CAMS is built
+cams/static/app/
