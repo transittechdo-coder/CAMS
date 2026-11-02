@@ -8,6 +8,8 @@ and recognition threads as well as from the web server.
 from __future__ import annotations
 
 import json
+import logging
+import shutil
 import sqlite3
 import threading
 import time
@@ -18,6 +20,8 @@ from typing import Any, Iterator
 import numpy as np
 
 from .config import DEFAULT_SETTINGS
+
+log = logging.getLogger("cams.db")
 
 SCHEMA_VERSION = 4
 
@@ -281,7 +285,65 @@ class Database:
         self.path = Path(path)
         self._write_lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.init()
+        self.repair_report: dict | None = None     # filled when a damaged database was repaired
+        self._open_safely()
+
+    @property
+    def backup_dir(self) -> Path:
+        return self.path.parent / "backups"
+
+    def _open_safely(self) -> None:
+        """Open the database; if it is damaged (power cut), repair it and carry on."""
+        from . import dbrepair
+
+        bad = dbrepair.problem(self.path)
+        if not bad:
+            try:
+                self.init()
+                return
+            except sqlite3.DatabaseError as exc:
+                bad = str(exc)
+        log.error("The database is damaged (%s). Repairing it.", bad)
+        folder = dbrepair.move_aside(self.path)
+        damaged = folder / self.path.name
+        self.init()                                     # a fresh, empty database
+        with self.write() as c:
+            saved = dbrepair.salvage(damaged, c)
+        report = {"when": time.time(), "problem": bad, "damaged_copy": str(folder), "source": "repaired",
+                  "saved": {k: v for k, v in saved.items() if v}}
+        # was the newest daily backup better (more people / accounts)? then use it
+        with self.conn() as c:
+            have = sum(dbrepair.count(c, t) for t in ("users", "people", "cameras"))
+            users = dbrepair.count(c, "users")
+        for b in dbrepair.backups(self.backup_dir):
+            if dbrepair.problem(b):
+                continue
+            bc = sqlite3.connect(f"file:{b}?mode=ro", uri=True)
+            try:
+                b_have = sum(dbrepair.count(bc, t) for t in ("users", "people", "cameras"))
+                b_users = dbrepair.count(bc, "users")
+            finally:
+                bc.close()
+            if (users == 0 and b_users > 0) or b_have > have * 1.2:
+                for suffix in ("", "-wal", "-shm"):
+                    Path(str(self.path) + suffix).unlink(missing_ok=True)
+                shutil.copy2(b, self.path)
+                self.init()                              # bring the backup up to this version
+                report.update(source="backup", backup=b.name, saved={})
+            break                                        # only the newest good backup
+        with self.conn() as c:
+            report["kept"] = {t: dbrepair.count(c, t) for t in dbrepair.IMPORTANT}
+        log.warning("Database repaired: %s", report)
+        self.repair_report = report
+
+    def backup(self) -> Path | None:
+        """Daily safety copy in <data>/backups (the last 7 are kept)."""
+        from . import dbrepair
+
+        out = dbrepair.make_backup(self.path, self.backup_dir)
+        if out:
+            self.set_settings({"last_auto_backup": time.time()})
+        return out
 
     # ------------------------------------------------------------ plumbing
     def _connect(self) -> sqlite3.Connection:
@@ -289,7 +351,7 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA synchronous = FULL")      # safer if the power goes off
         return conn
 
     @contextmanager

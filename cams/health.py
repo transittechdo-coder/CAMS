@@ -217,5 +217,6 @@ class Health:
                    "plates": bool(getattr(s, "plates", None) and s.plates.available),
                    "fire_smoke": bool(getattr(s, "fire_ai_ok", False))},
             "autostart": autostart_state(), "downtime": gaps, "last_backup": last_backup,
+            "last_auto_backup": s.db.get_setting("last_auto_backup", "") or None,
             "frames_analysed": s.stats.get("frames_analysed", 0),
         }
