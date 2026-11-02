@@ -1,5 +1,0 @@
--r requirements.txt
-pytest>=8
-httpx>=0.27
-onnx>=1.15        # builds a small stand-in colour model for the tests
-pyinstaller>=6.6

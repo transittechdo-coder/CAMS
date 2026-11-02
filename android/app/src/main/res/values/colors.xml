@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="paper">#EEF2F0</color>
-    <color name="ink">#10202B</color>
-    <color name="teal">#0F6E6A</color>
-    <color name="alarm">#B3140F</color>
-    <color name="ok">#1E8A4C</color>
-    <color name="icon_bg">#10202B</color>
-</resources>
