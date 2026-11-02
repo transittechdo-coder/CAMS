@@ -65,8 +65,15 @@ function startSiren() {
 }
 function stopSiren() { siren?.stop(); siren = null; }
 
-const em = h("div", { class: "em hidden", role: "alertdialog", "aria-live": "assertive" });
+const em = h("div", { class: "emergency hidden", role: "alertdialog", "aria-live": "assertive" });
 document.body.append(em);
+function emBadge() {                     // a warning sign inside two turning rings
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 100"); svg.setAttribute("class", "em-badge"); svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `<circle class="b-ring" cx="50" cy="50" r="46"/><circle class="b-ring2" cx="50" cy="50" r="38"/>
+    <path class="b-tri" d="M50 24 L74 68 H26 Z"/><path class="b-mark" d="M50 39 V54 M50 60 V62"/>`;
+  return svg;
+}
 async function pollEmergencies() {
   if (!me) return;
   let list = [];
@@ -76,20 +83,37 @@ async function pollEmergencies() {
   if (key !== shownKey) {
     if (list.some((a) => !shownKey.split(",").includes(String(a.id)))) muted = false;
     shownKey = key;
+    const main = EMERGENCY[list[0].kind] ? list[0].kind : "fire";
+    em.dataset.kind = list.every((a) => a.kind === main) ? main : "fire";
+    const title = list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind];
     em.replaceChildren(
-      h("div", { class: "row" }, h("h1", { class: "grow" }, list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind]),
-        h("button", { class: "mute", onclick: () => { muted = true; stopSiren(); } }, "Mute")),
-      ...list.map((a) => h("div", { class: "item" },
-        a.snapshot_path ? h("img", { src: `/api/snapshots/${a.snapshot_path}`, alt: "Camera picture" }) : null,
-        h("p", {}, h("b", {}, EMERGENCY[a.kind]), " · ", time(a.created_at), a.camera_name ? ` · ${a.camera_name}` : ""),
-        h("p", {}, a.message),
-        h("button", { class: "ok", onclick: async (e) => { e.target.disabled = true; try { await api(`/api/alerts/${a.id}/ack`, { method: "POST" }); } catch {} pollEmergencies(); } },
-          a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
-        a.kind !== "emergency_test" ? h("button", { style: "width:100%;margin-top:8px", onclick: async (e) => {
-          if (!confirm("Wrong alarm? CAMS will learn not to ring for this again.")) return;
-          e.target.disabled = true; try { await api(`/api/alerts/${a.id}/wrong`, { method: "POST" }); } catch {} pollEmergencies();
-        } }, "Wrong alarm") : null)),
-      h("p", {}, "Tanzania: 114 fire and rescue, 112 emergency."));
+      h("div", { class: "em-fx", "aria-hidden": "true" }, h("i", { class: "em-grid" }), h("i", { class: "em-ring" }), h("i", { class: "em-ring r2" }), h("i", { class: "em-scan" })),
+      h("div", { class: "em-box" },
+        h("i", { class: "em-corner tl" }), h("i", { class: "em-corner tr" }), h("i", { class: "em-corner bl" }), h("i", { class: "em-corner br" }),
+        h("div", { class: "em-stripes", "aria-hidden": "true" }),
+        h("div", { class: "em-head" }, emBadge(),
+          h("div", { class: "em-title" }, h("div", { class: "em-sub" }, "CAMS EMERGENCY ALERT"), h("h1", { "data-text": title }, title)),
+          h("button", { class: "em-mute", onclick: () => { muted = true; stopSiren(); } }, "Mute")),
+        h("div", { class: "em-list" }, list.map((a) => h("section", { class: `em-item k-${a.kind}` },
+          h("div", { class: "em-shot" },
+            a.snapshot_path ? h("img", { src: `/api/snapshots/${a.snapshot_path}`, alt: "Camera picture" }) : h("div", { class: "em-noimg" }, "NO PICTURE"),
+            h("i", { class: "em-sweep", "aria-hidden": "true" }),
+            h("span", { class: "em-tag" }, h("i", { class: "em-rec", "aria-hidden": "true" }), (a.camera_name || "Camera").toUpperCase())),
+          h("div", { class: "em-text" },
+            h("div", { class: "em-kind" }, EMERGENCY[a.kind]),
+            h("p", { class: "em-msg" }, a.message),
+            h("dl", { class: "em-data" },
+              h("dt", {}, "CAMERA"), h("dd", {}, a.camera_name || "-"),
+              h("dt", {}, "TIME"), h("dd", {}, time(a.created_at)),
+              h("dt", {}, "STATUS"), h("dd", { class: "em-live" }, "WAITING FOR SOMEONE")),
+            h("div", { class: "em-actions" },
+              h("button", { class: "em-ok", onclick: async (e) => { e.target.disabled = true; try { await api(`/api/alerts/${a.id}/ack`, { method: "POST" }); } catch {} pollEmergencies(); } },
+                a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
+              a.kind !== "emergency_test" ? h("button", { onclick: async (e) => {
+                if (!confirm("Wrong alarm? CAMS will learn not to ring for this again.")) return;
+                e.target.disabled = true; try { await api(`/api/alerts/${a.id}/wrong`, { method: "POST" }); } catch {} pollEmergencies();
+              } }, "Wrong alarm") : null))))),
+        h("p", { class: "em-foot" }, "Tanzania: 114 fire and rescue, 112 emergency.")));
   }
   em.classList.remove("hidden");
   startSiren();
