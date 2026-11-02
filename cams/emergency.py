@@ -461,17 +461,19 @@ class EmergencyMonitor:
         self.scores[kind].append((ts, p, tuple(box[:4])))
         self.last_info[kind] = {"ai": p, "feature": feats[len(feats) // 2] if len(feats) > 1 else feats[0]}
 
-    def _agrees(self, kind: str, ts: float, ai, sensitivity: str, box=None) -> bool:
+    def _agrees(self, kind: str, ts: float, ai, sensitivity: str, box=None, seconds: float = 3.0) -> bool:
         if ai is None:
             return True                             # no AI installed: the rules alone decide (older behaviour)
         need = AI_NEED.get(sensitivity, AI_NEED["normal"])[0 if kind == "fire" else 1]
         # only what the AI said about THIS place counts (not a different spot seen a few seconds ago)
-        recent = [p for t, p, b in self.scores[kind]
-                  if ts - t <= AI_WINDOW_S and (box is None or _overlap(b, box) > 0.2 or _overlap(box, b) > 0.2)]
+        here = [(t, p) for t, p, b in self.scores[kind]
+                if ts - t <= AI_WINDOW_S and (box is None or _overlap(b, box) > 0.2 or _overlap(box, b) > 0.2)]
+        recent = [p for _, p in here]
         score = top2(recent)
-        # a real fire keeps looking like fire; one or two odd frames of a sign or a shelf do not count
-        agree = sum(1 for p in recent if p >= need)
-        if agree < 2 or agree < 0.5 * len(recent):
+        # a real fire keeps looking like fire for seconds; a sign, a light or a shelf that fools the AI
+        # for a moment does not count
+        agree = [t for t, p in here if p >= need]
+        if len(agree) < 2 or len(agree) < 0.5 * len(recent) or ts - agree[0] < 0.8 * max(seconds, 3.0) - 0.6:
             score = min(score, need * 0.99)
         last = self.scores[kind][-1] if self.scores[kind] else None
         if last is not None and last[0] == ts and last[1] < need * 0.4:
@@ -495,13 +497,13 @@ class EmergencyMonitor:
                 box = self.fire.update(small, ts, people, k, fire_s, fire_area)
                 if self.fire.candidate is not None:
                     self._second_opinion("fire", frame, _scale(self.fire.candidate, k), ts, ai)
-                if box and self._agrees("fire", ts, ai, sensitivity, _scale(box, k)):
+                if box and self._agrees("fire", ts, ai, sensitivity, _scale(box, k), fire_s):
                     events.append(("fire", f"Possible FIRE at {cam_name}. Check the camera now and call for help.", _scale(box, k)))
             if rules.get("smoke", True):
                 box = self.smoke.update(small, ts, people, k, smoke_s, smoke_cover)
                 if self.smoke.candidate is not None:
                     self._second_opinion("smoke", frame, _scale(self.smoke.candidate, k), ts, ai)
-                if box and self._agrees("smoke", ts, ai, sensitivity, _scale(box, k)):
+                if box and self._agrees("smoke", ts, ai, sensitivity, _scale(box, k), smoke_s):
                     events.append(("smoke", f"Heavy SMOKE at {cam_name}. Check the camera now: there may be a fire.", _scale(box, k)))
         if rules.get("person_down", True) and tracks is not None and not sleeping_place:
             beds = [o for o in (objects or []) if len(o) > 5 and o[5] in BED_CLASSES]
