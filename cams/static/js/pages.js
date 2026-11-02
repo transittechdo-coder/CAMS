@@ -1210,7 +1210,7 @@ async function alerts(el) {
     loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"], running: ["Running", "amber"],
     fire: ["FIRE", "red"], smoke: ["Heavy smoke", "red"], person_down: ["Person down", "red"], emergency_test: ["Alarm test", ""],
     bag_left: ["Bag left", "amber"], visitor_overstay: ["Visitor overstay", "amber"], plate_flagged: ["Flagged vehicle", "red"],
-    plate_unknown: ["Unknown vehicle", "amber"], downtime: ["CAMS was off", "amber"], power: ["Power", "amber"],
+    plate_unknown: ["Unknown vehicle", "amber"], downtime: ["CAMS was off", "amber"], power: ["Power", "amber"], database: ["Database repaired", "amber"],
   };
   const big = (src) => dialog({ title: "Alert picture", wide: true, body: h("img", { src, alt: "Alert picture", style: { width: "100%", borderRadius: "6px" } }) });
   async function load() {

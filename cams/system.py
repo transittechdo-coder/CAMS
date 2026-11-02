@@ -107,6 +107,18 @@ class CamsSystem:
             self.health.on_start()
         except Exception:
             log.exception("Could not check for a power cut")
+        rep = self.db.repair_report
+        if rep:
+            k = rep.get("kept", {})
+            what = f"{k.get('people', 0)} people, {k.get('cameras', 0)} cameras and {k.get('users', 0)} accounts"
+            how = (f"from the automatic backup {rep.get('backup')}" if rep.get("source") == "backup"
+                   else "by copying everything that could still be read")
+            try:
+                self._alert("database", f"The CAMS database was damaged (probably by a power cut) and was repaired {how}. "
+                                        f"Kept: {what}. The damaged file was saved in {rep.get('damaged_copy')}.",
+                            None, None, None)
+            except Exception:
+                log.exception("Could not write the repair alert")
         if self.models_ok:
             n = self.worker_count()
             for i in range(n):
@@ -876,6 +888,7 @@ class CamsSystem:
     def _maintenance_loop(self) -> None:
         last_purge = time.time() - 540           # first clean-up a minute after start
         last_routines = 0.0
+        last_backup = float(self.db.get_setting("last_auto_backup", "0") or 0)
         while not self._stop.wait(10):
             now = time.time()
             try:
@@ -904,6 +917,12 @@ class CamsSystem:
                     self.purge_old()
                 except Exception:
                     log.exception("Retention purge failed")
+            if now - last_backup > 24 * 3600:        # a safety copy of the database every day
+                last_backup = now
+                try:
+                    self.db.backup()
+                except Exception:
+                    log.exception("Daily database backup failed")
 
 
 def snapshot_file(paths: Paths, rel: str) -> Path | None:

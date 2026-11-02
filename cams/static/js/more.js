@@ -72,7 +72,8 @@ export async function health(el) {
     pc.replaceChildren(...keep(
       r.load ? `Computer load: processor ${Math.round(r.load.cpu)}%, memory ${Math.round(r.load.ram)}% (CAMS uses ${r.load.cams_ram_mb} MB). ` : "",
       `${r.frames_analysed.toLocaleString()} pictures checked by the AI since start. `,
-      r.last_backup ? `Last backup ${ago(Number(r.last_backup))}.` : "No backup downloaded yet (Settings → Backup).",
+      r.last_auto_backup ? `Automatic safety copy of the database ${ago(Number(r.last_auto_backup))} (the last 7 days are kept). ` : "",
+      r.last_backup ? `Last downloaded backup ${ago(Number(r.last_backup))}.` : "No backup downloaded yet (Settings → Backup).",
     ));
     if (first) {
       first = false;

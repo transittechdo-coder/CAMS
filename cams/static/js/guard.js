@@ -28,7 +28,7 @@ const LABEL = { fire: ["FIRE", "red"], smoke: ["Heavy smoke", "red"], person_dow
   watchlist: ["Watch list", "amber"], access_violation: ["Not allowed here", "red"], unknown_restricted: ["Restricted camera", "red"],
   visitor_overstay: ["Visitor overstay", "amber"], bag_left: ["Bag left", "amber"], plate_flagged: ["Flagged vehicle", "red"],
   plate_unknown: ["Unknown vehicle", "amber"], camera_offline: ["Camera offline", ""], tamper: ["Camera tampering", "red"],
-  downtime: ["CAMS was off", "amber"], power: ["Power", "amber"], loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"],
+  downtime: ["CAMS was off", "amber"], power: ["Power", "amber"], database: ["Database repaired", "amber"], loitering: ["Loitering", "amber"], crowd: ["Crowd", "amber"],
   running: ["Running", "amber"], after_hours: ["After hours", "amber"] };
 const EMERGENCY = { fire: "FIRE", smoke: "HEAVY SMOKE", person_down: "PERSON DOWN", emergency_test: "ALARM TEST" };
 
