@@ -61,7 +61,7 @@ MIN_PERSON_SCORE = 0.5        # how sure the person finder must be that it is a 
 # the second opinion: how sure the fire / smoke AI must be (top-2 average over the last seconds)
 AI_FEATURES = "image_classification_mobilenetv2_2022apr.onnx"
 AI_HEAD = Path(__file__).resolve().parent / "data" / "fire_smoke_head.npz"
-AI_NEED = {"low": (0.5, 0.7), "normal": (0.35, 0.5), "high": (0.25, 0.35)}   # (fire, smoke)
+AI_NEED = {"low": (0.5, 0.7), "normal": (0.4, 0.5), "high": (0.4, 0.35)}   # (fire, smoke)
 AI_WINDOW_S = 15.0
 MAX_PLACES = 4            # flame-like places followed at once (a fire next to a bright sign)
 AI_PLACES = 2             # how many of them the AI looks at each time
