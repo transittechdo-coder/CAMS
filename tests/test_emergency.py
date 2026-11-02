@@ -168,7 +168,7 @@ def test_pose_overrides_shape():
     assert any(k == "person_down" for _, k in hits)
 
 
-def test_emergency_alert_reaches_the_app(admin, system):
+def test_emergency_alert_reaches_the_app(admin, system, monkeypatch):
     cam = admin.post("/api/cameras", json={"name": "Store room", "source": "0", "kind": "usb"}).json()["id"]
     listed = next(c for c in admin.get("/api/cameras").json() if c["id"] == cam)
     assert listed["analytics"]["fire"] is True and listed["analytics"]["person_down"] is True
@@ -185,6 +185,7 @@ def test_emergency_alert_reaches_the_app(admin, system):
     from cams.activity import ActivityMonitor
     mon = ActivityMonitor()
     bg = scene()
+    monkeypatch.setattr(system, "fire_ai_ok", False)   # this test is about the alert reaching the app; a drawn flame does not fool the AI
     for i in range(16):
         system._check_emergencies(W, flame(bg.copy(), 320, 300, 40, i * 0.5), 1000 + i * 0.5, mon, [], [], parse_analytics(None), [])
     a = admin.get("/api/alerts").json()

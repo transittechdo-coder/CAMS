@@ -96,7 +96,16 @@ class FireSmokeAI:
         self.net = cv2.dnn.readNet(str(Path(models_dir) / AI_FEATURES))
         h = np.load(head)
         self.mean, self.scale = h["mean"], h["scale"]
-        self.w1, self.b1, self.w2, self.b2 = h["w1"], h["b1"], h["w2"], h["b2"]
+        # one or more small networks ("m0_w1", "m0_b1", ... or the older "w1", "b1", "w2", "b2"); they vote
+        prefixes = sorted({k.split("_")[0] for k in h.files if k.startswith("m") and "_w" in k}) or [""]
+        self.models = []
+        for pre in prefixes:
+            p = f"{pre}_" if pre else ""
+            layers, i = [], 1
+            while f"{p}w{i}" in h.files:
+                layers.append((h[f"{p}w{i}"].astype(np.float32), h[f"{p}b{i}"].astype(np.float32)))
+                i += 1
+            self.models.append(layers)
 
     @staticmethod
     def available(models_dir: Path) -> bool:
@@ -112,11 +121,17 @@ class FireSmokeAI:
 
     def probs(self, feats: np.ndarray) -> np.ndarray:
         """(n, 3): none, fire, smoke."""
-        x = (feats - self.mean) / self.scale
-        hdn = np.maximum(0, x @ self.w1 + self.b1)
-        z = hdn @ self.w2 + self.b2
-        z = np.exp(z - z.max(axis=1, keepdims=True))
-        return z / z.sum(axis=1, keepdims=True)
+        x = (feats.astype(np.float32) - self.mean) / self.scale
+        out = 0
+        for layers in self.models:
+            a = x
+            for j, (w, b) in enumerate(layers):
+                a = a @ w + b
+                if j < len(layers) - 1:
+                    a = np.maximum(0, a)
+            z = np.exp(a - a.max(axis=1, keepdims=True))
+            out = out + z / z.sum(axis=1, keepdims=True)
+        return out / len(self.models)
 
 
 def context_crops(frame: np.ndarray, box, scales=(1.6, 2.5, 4.0)) -> list[np.ndarray]:
@@ -245,7 +260,10 @@ class FireCheck:
         # fire = a flame-like area in the same place for `seconds`, in most of the checks, that flickers
         window = [t for t in self.checks if ts - t <= seconds]
         recent = [h for h in self.hits if ts - h[0] <= seconds]
-        if not best or len(window) < 3 or ts - window[0] < seconds * 0.8 or len(recent) < 0.7 * len(window):
+        # (allow one check's gap: at 2 checks a second a 2-second window only spans 1.5 seconds)
+        span = ts - window[0] if window else 0.0
+        step = span / (len(window) - 1) if len(window) > 1 else 0.0
+        if not best or len(window) < 3 or span + step < seconds * 0.8 or len(recent) < 0.7 * len(window):
             return None
         # a fire grows and rises but stays where it started; a car or a person goes somewhere else
         bx, by, bw, bh = best[0]
@@ -440,15 +458,24 @@ class EmergencyMonitor:
         pr = ai.probs(feats)
         p = float(pr[:, 1].max()) if kind == "fire" else float(pr[:, 2].max())
         p = max(p, float(pr[:, 1:].max()) * 0.8)    # fire seen as smoke (or smoke as fire) still counts, a bit less
-        self.scores[kind].append((ts, p))
+        self.scores[kind].append((ts, p, tuple(box[:4])))
         self.last_info[kind] = {"ai": p, "feature": feats[len(feats) // 2] if len(feats) > 1 else feats[0]}
 
-    def _agrees(self, kind: str, ts: float, ai, sensitivity: str) -> bool:
+    def _agrees(self, kind: str, ts: float, ai, sensitivity: str, box=None) -> bool:
         if ai is None:
             return True                             # no AI installed: the rules alone decide (older behaviour)
         need = AI_NEED.get(sensitivity, AI_NEED["normal"])[0 if kind == "fire" else 1]
-        recent = [p for t, p in self.scores[kind] if ts - t <= AI_WINDOW_S]
+        # only what the AI said about THIS place counts (not a different spot seen a few seconds ago)
+        recent = [p for t, p, b in self.scores[kind]
+                  if ts - t <= AI_WINDOW_S and (box is None or _overlap(b, box) > 0.2 or _overlap(box, b) > 0.2)]
         score = top2(recent)
+        # a real fire keeps looking like fire; one or two odd frames of a sign or a shelf do not count
+        agree = sum(1 for p in recent if p >= need)
+        if agree < 2 or agree < 0.5 * len(recent):
+            score = min(score, need * 0.99)
+        last = self.scores[kind][-1] if self.scores[kind] else None
+        if last is not None and last[0] == ts and last[1] < need * 0.4:
+            score = min(score, last[1])             # the AI clearly disagrees right now: wait
         if kind in self.last_info:
             self.last_info[kind]["score"] = score
         if score < need:
@@ -468,13 +495,13 @@ class EmergencyMonitor:
                 box = self.fire.update(small, ts, people, k, fire_s, fire_area)
                 if self.fire.candidate is not None:
                     self._second_opinion("fire", frame, _scale(self.fire.candidate, k), ts, ai)
-                if box and self._agrees("fire", ts, ai, sensitivity):
+                if box and self._agrees("fire", ts, ai, sensitivity, _scale(box, k)):
                     events.append(("fire", f"Possible FIRE at {cam_name}. Check the camera now and call for help.", _scale(box, k)))
             if rules.get("smoke", True):
                 box = self.smoke.update(small, ts, people, k, smoke_s, smoke_cover)
                 if self.smoke.candidate is not None:
                     self._second_opinion("smoke", frame, _scale(self.smoke.candidate, k), ts, ai)
-                if box and self._agrees("smoke", ts, ai, sensitivity):
+                if box and self._agrees("smoke", ts, ai, sensitivity, _scale(box, k)):
                     events.append(("smoke", f"Heavy SMOKE at {cam_name}. Check the camera now: there may be a fire.", _scale(box, k)))
         if rules.get("person_down", True) and tracks is not None and not sleeping_place:
             beds = [o for o in (objects or []) if len(o) > 5 and o[5] in BED_CLASSES]
