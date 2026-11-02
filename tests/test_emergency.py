@@ -403,3 +403,33 @@ def test_wrong_alarm_is_remembered(admin, system):
     # something different on the same camera still rings
     feat[:] = np.random.default_rng(9).normal(size=1280)
     assert len(burn(9000)) == 1
+
+
+def test_fire_detection_can_be_switched_off_for_every_camera(admin, system, monkeypatch):
+    from cams.activity import ActivityMonitor
+    cam = admin.post("/api/cameras", json={"name": "Kitchen 2", "source": "0", "kind": "usb"}).json()["id"]
+    assert admin.put("/api/settings", json={"fire_detection": "maybe"}).status_code == 400
+    assert admin.put("/api/settings", json={"fire_detection": "0", "alarm_sound": "0"}).status_code == 200
+    assert admin.get("/api/settings").json()["fire_detection"] == "0"
+    monkeypatch.setattr(system, "fire_ai_ok", False)
+
+    class W:
+        id = cam
+
+        class state:
+            name = "Kitchen 2"
+
+    def fires():
+        return [x for x in admin.get("/api/alerts").json() if x["kind"] == "fire" and x["camera_id"] == cam]
+
+    mon, bg = ActivityMonitor(), scene()
+    for i in range(16):
+        system._check_emergencies(W, flame(bg.copy(), 320, 300, 40, i * 0.5), 2000 + i * 0.5, mon, [], [], parse_analytics(None), [])
+    assert fires() == []                                     # switched off: no fire alarm
+    admin.put("/api/settings", json={"fire_detection": "1"})
+    system.emergency.pop(cam, None)
+    for i in range(16):
+        system._check_emergencies(W, flame(bg.copy(), 320, 300, 40, i * 0.5), 3000 + i * 0.5, mon, [], [], parse_analytics(None), [])
+    assert len(fires()) == 1                                 # back on: the fire is seen again
+    for x in admin.get("/api/alerts/emergencies").json():
+        admin.post(f"/api/alerts/{x['id']}/ack")
