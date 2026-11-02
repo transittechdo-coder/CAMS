@@ -61,8 +61,10 @@ MIN_PERSON_SCORE = 0.5        # how sure the person finder must be that it is a 
 # the second opinion: how sure the fire / smoke AI must be (top-2 average over the last seconds)
 AI_FEATURES = "image_classification_mobilenetv2_2022apr.onnx"
 AI_HEAD = Path(__file__).resolve().parent / "data" / "fire_smoke_head.npz"
-AI_NEED = {"low": (0.5, 0.7), "normal": (0.35, 0.5), "high": (0.25, 0.35)}   # (fire, smoke)
+AI_NEED = {"low": (0.5, 0.7), "normal": (0.4, 0.5), "high": (0.4, 0.35)}   # (fire, smoke)
 AI_WINDOW_S = 15.0
+MAX_PLACES = 4            # flame-like places followed at once (a fire next to a bright sign)
+AI_PLACES = 2             # how many of them the AI looks at each time
 FORGET_SIMILAR = 0.88         # "Wrong alarm" pictures this similar (cosine) are not alarmed again
 
 
@@ -96,7 +98,16 @@ class FireSmokeAI:
         self.net = cv2.dnn.readNet(str(Path(models_dir) / AI_FEATURES))
         h = np.load(head)
         self.mean, self.scale = h["mean"], h["scale"]
-        self.w1, self.b1, self.w2, self.b2 = h["w1"], h["b1"], h["w2"], h["b2"]
+        # one or more small networks ("m0_w1", "m0_b1", ... or the older "w1", "b1", "w2", "b2"); they vote
+        prefixes = sorted({k.split("_")[0] for k in h.files if k.startswith("m") and "_w" in k}) or [""]
+        self.models = []
+        for pre in prefixes:
+            p = f"{pre}_" if pre else ""
+            layers, i = [], 1
+            while f"{p}w{i}" in h.files:
+                layers.append((h[f"{p}w{i}"].astype(np.float32), h[f"{p}b{i}"].astype(np.float32)))
+                i += 1
+            self.models.append(layers)
 
     @staticmethod
     def available(models_dir: Path) -> bool:
@@ -112,11 +123,17 @@ class FireSmokeAI:
 
     def probs(self, feats: np.ndarray) -> np.ndarray:
         """(n, 3): none, fire, smoke."""
-        x = (feats - self.mean) / self.scale
-        hdn = np.maximum(0, x @ self.w1 + self.b1)
-        z = hdn @ self.w2 + self.b2
-        z = np.exp(z - z.max(axis=1, keepdims=True))
-        return z / z.sum(axis=1, keepdims=True)
+        x = (feats.astype(np.float32) - self.mean) / self.scale
+        out = 0
+        for layers in self.models:
+            a = x
+            for j, (w, b) in enumerate(layers):
+                a = a @ w + b
+                if j < len(layers) - 1:
+                    a = np.maximum(0, a)
+            z = np.exp(a - a.max(axis=1, keepdims=True))
+            out = out + z / z.sum(axis=1, keepdims=True)
+        return out / len(self.models)
 
 
 def context_crops(frame: np.ndarray, box, scales=(1.6, 2.5, 4.0)) -> list[np.ndarray]:
@@ -162,9 +179,10 @@ class FireCheck:
         self.known: np.ndarray | None = None       # where the usual look has been learned
         self.heat: np.ndarray | None = None        # where flame colours were seen recently
         self.checks: deque = deque(maxlen=80)      # times of every check
-        self.hits: deque = deque(maxlen=80)        # (ts, box, flicker, shimmer) of flame-like areas
+        self.hits: deque = deque(maxlen=400)       # (ts, box, flicker, shimmer) of flame-like areas
         self.last_box = None
         self.candidate = None
+        self.candidates: list = []
 
     @staticmethod
     def flame_masks(small: np.ndarray):
@@ -184,7 +202,7 @@ class FireCheck:
         m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
         return cv2.dilate(m, np.ones((3, 3), np.uint8))
 
-    def update(self, small: np.ndarray, ts: float, people, k: float, seconds: float, min_area_pct: float):
+    def update(self, small: np.ndarray, ts: float, people, k: float, seconds: float, min_area_pct: float) -> list:
         orange, _ = self.flame_masks(small)
         mask = self.flame_mask(small)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
@@ -195,20 +213,20 @@ class FireCheck:
             self.bg = small.astype(np.float32)
             self.heat = np.zeros(mask.shape, np.float32)
             self.known = np.ones(mask.shape, bool)   # lamps and signs already glowing are part of the usual view
-            return None
+            return []
         self.heat = np.maximum(self.heat * 0.9, cv2.dilate(mask, np.ones((7, 7), np.uint8)).astype(np.float32) / 255)
         if prev is None or prev.shape != mask.shape:
-            return None
+            return []
         # the whole picture changed at once (lights, headlights, night mode, camera moved): start again
         if float(np.mean(cv2.absdiff(gray, prev_gray))) > 45:
             self.bg = small.astype(np.float32)
             self.hits.clear()
-            self.candidate = None
-            return None
+            self.candidate, self.candidates = None, []
+            return []
         self.checks.append(ts)
         total = mask.shape[0] * mask.shape[1]
         n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        best = None
+        found = []
         for i in range(1, n):
             x, y, w, h, area = stats[i]
             if area < total * min_area_pct / 100 or area > total * 0.6:
@@ -233,34 +251,42 @@ class FireCheck:
             changed = np.logical_xor(mask[y:y + h, x:x + w] > 0, prev[y:y + h, x:x + w] > 0) & both
             flicker = float(changed.sum()) / max(1, both.sum())
             shimmer = float(np.mean(cv2.absdiff(gray[y:y + h, x:x + w], prev_gray[y:y + h, x:x + w])[roi]))
-            if best is None or area > best[1]:
-                best = (box, area, flicker, shimmer)
+            found.append((box, int(area), flicker, shimmer))
         # learn the usual view slowly, but never where flame colours were seen recently
         still = self.heat < 0.05
         self.bg[still] = self.bg[still] * 0.97 + small[still].astype(np.float32) * 0.03
         self.known |= still
-        self.candidate = best[0] if best else None
-        if best:
-            self.hits.append((ts, best[0], best[2], best[3]))
-        # fire = a flame-like area in the same place for `seconds`, in most of the checks, that flickers
+        # several flame-like places can be in view at once (a fire and a bright sign): each is followed
+        found = sorted(found, key=lambda f: -f[1])[:MAX_PLACES]
+        for f in found:
+            self.hits.append((ts, f[0], f[2], f[3]))
         window = [t for t in self.checks if ts - t <= seconds]
-        recent = [h for h in self.hits if ts - h[0] <= seconds]
-        if not best or len(window) < 3 or ts - window[0] < seconds * 0.8 or len(recent) < 0.7 * len(window):
-            return None
-        # a fire grows and rises but stays where it started; a car or a person goes somewhere else
-        bx, by, bw, bh = best[0]
-        gx, gy = bw * 0.25 + 4, bh * 0.25 + 4
-        overlaps = sum(1 for _, b, _, _ in recent
-                       if b[0] < bx + bw + gx and b[0] + b[2] > bx - gx and b[1] < by + bh + gy and b[1] + b[3] > by - gy)
-        first = recent[0][1]
-        if overlaps < 0.8 * len(recent) or not (first[0] < bx + bw + gx and first[0] + first[2] > bx - gx):
-            return None
-        flicker = float(np.mean([h[2] for h in recent]))
-        shimmer = float(np.mean([h[3] for h in recent]))
-        if flicker < 0.1 or shimmer < 5:
-            return None                           # steady: a lamp or an orange object, not a flame
-        self.last_box = best[0]
-        return best[0]
+        places = []
+        for f in found:
+            here = [h for h in self.hits if ts - h[0] <= seconds and _near(h[1], f[0])]
+            places.append((len({h[0] for h in here}), f, here))
+        places.sort(key=lambda p: (-p[0], -p[1][1]))
+        self.candidates = [p[1][0] for p in places]
+        self.candidate = self.candidates[0] if self.candidates else None
+        # fire = a flame-like area in the same place for `seconds`, in most of the checks, that flickers
+        # (allow one check's gap: at 2 checks a second a 2-second window only spans 1.5 seconds)
+        span = ts - window[0] if window else 0.0
+        step = span / (len(window) - 1) if len(window) > 1 else 0.0
+        if len(window) < 3 or span + step < seconds * 0.8:
+            return []
+        confirmed = []
+        for times, f, here in places:
+            # a fire grows and rises but stays where it started; a car or a person goes somewhere else
+            if times < 0.7 * len(window):
+                continue
+            flicker = float(np.mean([h[2] for h in here]))
+            shimmer = float(np.mean([h[3] for h in here]))
+            if flicker < 0.1 or shimmer < 5:
+                continue                          # steady: a lamp or an orange object, not a flame
+            confirmed.append(f[0])
+        if confirmed:
+            self.last_box = confirmed[0]
+        return confirmed
 
 
 # ====================================================================== smoke
@@ -409,6 +435,13 @@ class DownCheck:
         return out
 
 
+def _near(a, b) -> bool:
+    """Box a is at (about) the same place as box b: a fire grows a little but stays where it started."""
+    bx, by, bw, bh = b[:4]
+    gx, gy = bw * 0.25 + 4, bh * 0.25 + 4
+    return a[0] < bx + bw + gx and a[0] + a[2] > bx - gx and a[1] < by + bh + gy and a[1] + a[3] > by - gy
+
+
 def _overlap(a, b) -> float:
     ax, ay, aw, ah = a[:4]
     bx, by, bw, bh = b[:4]
@@ -427,7 +460,8 @@ class EmergencyMonitor:
         self.fire = FireCheck()
         self.smoke = SmokeCheck()
         self.down = DownCheck()
-        self.scores = {"fire": deque(maxlen=40), "smoke": deque(maxlen=40)}
+        self.scores = {"fire": deque(maxlen=40 * AI_PLACES), "smoke": deque(maxlen=40)}
+        self._info: dict = {}                       # what the AI saw at each place this time
         self.last_info: dict[str, dict] = {}
         self.vetoed = {"fire": 0, "smoke": 0}
 
@@ -440,15 +474,31 @@ class EmergencyMonitor:
         pr = ai.probs(feats)
         p = float(pr[:, 1].max()) if kind == "fire" else float(pr[:, 2].max())
         p = max(p, float(pr[:, 1:].max()) * 0.8)    # fire seen as smoke (or smoke as fire) still counts, a bit less
-        self.scores[kind].append((ts, p))
+        self.scores[kind].append((ts, p, tuple(box[:4])))
         self.last_info[kind] = {"ai": p, "feature": feats[len(feats) // 2] if len(feats) > 1 else feats[0]}
+        self._info[(kind, tuple(box[:4]))] = self.last_info[kind]
 
-    def _agrees(self, kind: str, ts: float, ai, sensitivity: str) -> bool:
+    def _agrees(self, kind: str, ts: float, ai, sensitivity: str, box=None, seconds: float = 3.0) -> bool:
         if ai is None:
             return True                             # no AI installed: the rules alone decide (older behaviour)
         need = AI_NEED.get(sensitivity, AI_NEED["normal"])[0 if kind == "fire" else 1]
-        recent = [p for t, p in self.scores[kind] if ts - t <= AI_WINDOW_S]
+        # only what the AI said about THIS place counts (not a different spot seen a few seconds ago)
+        here = [(t, p) for t, p, b in self.scores[kind]
+                if ts - t <= AI_WINDOW_S and (box is None or _overlap(b, box) > 0.2 or _overlap(box, b) > 0.2)]
+        recent = [p for _, p in here]
         score = top2(recent)
+        # a real fire keeps looking like fire for seconds; a sign, a light or a shelf that fools the AI
+        # for a moment does not count
+        agree = [t for t, p in here if p >= need]
+        if len(agree) < 2 or len(agree) < 0.5 * len(recent) or ts - agree[0] < 0.8 * max(seconds, 3.0) - 0.6:
+            score = min(score, need * 0.99)
+        now = [p for t, p in here if t == ts]
+        if now and max(now) < need * 0.4:
+            score = min(score, max(now))            # the AI clearly disagrees right now: wait
+        if box is not None:                         # remember what the AI saw at the place being judged
+            info = next((v for (kd, b), v in self._info.items() if kd == kind and (_overlap(b, box) > 0.2 or _overlap(box, b) > 0.2)), None)
+            if info is not None:
+                self.last_info[kind] = info
         if kind in self.last_info:
             self.last_info[kind]["score"] = score
         if score < need:
@@ -460,21 +510,24 @@ class EmergencyMonitor:
                 sensitivity: str = "normal", tilt_of=None, sleeping_place: bool = False, ai=None,
                 pose_ok: bool | None = None, field_place: bool = False):
         events = []
+        self._info = {}
         fire_s, fire_area, smoke_s, smoke_cover = SENSITIVITY.get(sensitivity, SENSITIVITY["normal"])
         if rules.get("fire", True) or rules.get("smoke", True):
             small = _small(frame)
             k = small.shape[1] / frame.shape[1]
             if rules.get("fire", True):
-                box = self.fire.update(small, ts, people, k, fire_s, fire_area)
-                if self.fire.candidate is not None:
-                    self._second_opinion("fire", frame, _scale(self.fire.candidate, k), ts, ai)
-                if box and self._agrees("fire", ts, ai, sensitivity):
-                    events.append(("fire", f"Possible FIRE at {cam_name}. Check the camera now and call for help.", _scale(box, k)))
+                boxes = self.fire.update(small, ts, people, k, fire_s, fire_area)
+                for c in self.fire.candidates[:AI_PLACES]:
+                    self._second_opinion("fire", frame, _scale(c, k), ts, ai)
+                for box in boxes:
+                    if self._agrees("fire", ts, ai, sensitivity, _scale(box, k), fire_s):
+                        events.append(("fire", f"Possible FIRE at {cam_name}. Check the camera now and call for help.", _scale(box, k)))
+                        break
             if rules.get("smoke", True):
                 box = self.smoke.update(small, ts, people, k, smoke_s, smoke_cover)
                 if self.smoke.candidate is not None:
                     self._second_opinion("smoke", frame, _scale(self.smoke.candidate, k), ts, ai)
-                if box and self._agrees("smoke", ts, ai, sensitivity):
+                if box and self._agrees("smoke", ts, ai, sensitivity, _scale(box, k), smoke_s):
                     events.append(("smoke", f"Heavy SMOKE at {cam_name}. Check the camera now: there may be a fire.", _scale(box, k)))
         if rules.get("person_down", True) and tracks is not None and not sleeping_place:
             beds = [o for o in (objects or []) if len(o) > 5 and o[5] in BED_CLASSES]

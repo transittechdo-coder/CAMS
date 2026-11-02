@@ -168,7 +168,7 @@ def test_pose_overrides_shape():
     assert any(k == "person_down" for _, k in hits)
 
 
-def test_emergency_alert_reaches_the_app(admin, system):
+def test_emergency_alert_reaches_the_app(admin, system, monkeypatch):
     cam = admin.post("/api/cameras", json={"name": "Store room", "source": "0", "kind": "usb"}).json()["id"]
     listed = next(c for c in admin.get("/api/cameras").json() if c["id"] == cam)
     assert listed["analytics"]["fire"] is True and listed["analytics"]["person_down"] is True
@@ -185,6 +185,7 @@ def test_emergency_alert_reaches_the_app(admin, system):
     from cams.activity import ActivityMonitor
     mon = ActivityMonitor()
     bg = scene()
+    monkeypatch.setattr(system, "fire_ai_ok", False)   # this test is about the alert reaching the app; a drawn flame does not fool the AI
     for i in range(16):
         system._check_emergencies(W, flame(bg.copy(), 320, 300, 40, i * 0.5), 1000 + i * 0.5, mon, [], [], parse_analytics(None), [])
     a = admin.get("/api/alerts").json()
@@ -259,6 +260,80 @@ def test_real_ai_model_loads_and_scores():
     assert p.shape == (2, 3) and np.allclose(p.sum(1), 1, atol=1e-4)
     assert p[:, 1:].max() < 0.5                              # a corridor and a grey wall are not fire
 
+
+
+# ------------------------------------------------------------------ fire: fewer false alarms (1.9.1)
+class ScriptedAI(FakeAI):
+    """Fire score changes over time: script(ts) -> fire probability."""
+    def __init__(self, script):
+        super().__init__()
+        self.script, self.ts = script, 0.0
+
+    def probs(self, feats):
+        f = self.script(self.ts)
+        return np.repeat(np.array([[1 - f, f, 0.0]], np.float32), len(feats), axis=0)
+
+
+def run_scripted(frames, ai, sens="normal"):
+    from cams.emergency import EmergencyMonitor
+    em, out = EmergencyMonitor(), []
+    for ts, img in frames:
+        ai.ts = ts
+        out += [(ts, k) for k, _, _ in em.analyse(img, ts, None, [], [], RULES, "Store room", sens, ai=ai)]
+    return out
+
+
+def test_ai_fooled_for_a_moment_is_not_a_fire():
+    bg = scene()
+    frames = [(i * 0.5, flame(bg.copy(), 320, 300, 40, i * 0.5)) for i in range(24)]
+    # a sign or a shelf: the AI says "fire" for one second only
+    blip = ScriptedAI(lambda ts: 0.95 if 4.0 <= ts < 5.0 else 0.0)
+    assert not [k for _, k in run_scripted(frames, blip) if k == "fire"]
+    # a real fire: the AI keeps saying "fire"
+    steady = ScriptedAI(lambda ts: 0.95)
+    assert [k for _, k in run_scripted(frames, steady) if k == "fire"]
+
+
+def test_high_sensitivity_confirms_a_fire_at_two_checks_a_second():
+    from cams.emergency import EmergencyMonitor
+    bg = scene()
+    em, hits = EmergencyMonitor(), []
+    for i in range(20):
+        ts = 1000.0 + i * 0.52                                   # a real camera: a little under 2 checks a second
+        hits += [ts for k, _, _ in em.analyse(flame(bg.copy(), 320, 300, 40, ts), ts, None, [], [], RULES, "x", "high") if k == "fire"]
+    assert hits and hits[0] - 1000 < 4
+
+
+def test_fire_is_found_next_to_a_bigger_bright_sign():
+    from cams.emergency import EmergencyMonitor
+    bg = scene()
+    em, hits = EmergencyMonitor(), []
+    for i in range(20):
+        ts = i * 0.5
+        img = flame(bg.copy(), 160, 300, 30, ts)
+        # a big orange sign whose lights change (bigger than the flame, steady place)
+        cv2.rectangle(img, (380, 40), (600, 140), (0, 140 + 20 * (i % 2), 255), -1)
+        hits += [(ts, b) for k, _, b in em.analyse(img, ts, None, [], [], RULES, "x", "normal") if k == "fire"]
+    assert hits and hits[0][1][0] < 300                     # the alarm is about the flame on the left
+
+
+def test_ai_team_of_models_is_averaged(tmp_path, monkeypatch):
+    from cams import emergency
+    monkeypatch.setattr(emergency.cv2.dnn, "readNet", lambda path: None)
+    n = 1280
+    one = np.zeros((n, 3), np.float32); one[0, 1] = 10          # model 0: feature 0 means fire
+    two = np.zeros((n, 3), np.float32); two[0, 0] = 10          # model 1: feature 0 means nothing
+    np.savez(tmp_path / "head.npz", mean=np.zeros(n, np.float32), scale=np.ones(n, np.float32),
+             m0_w1=one, m0_b1=np.zeros(3, np.float32), m1_w1=two, m1_b1=np.zeros(3, np.float32))
+    ai = emergency.FireSmokeAI(tmp_path, head=tmp_path / "head.npz")
+    assert len(ai.models) == 2
+    x = np.zeros((1, n), np.float32); x[0, 0] = 1
+    p = ai.probs(x)[0]
+    assert abs(p[1] - 0.5) < 0.01 and abs(p[0] - 0.5) < 0.01   # half the team says fire
+    # the older single-model file still loads
+    np.savez(tmp_path / "old.npz", mean=np.zeros(n, np.float32), scale=np.ones(n, np.float32),
+             w1=one, b1=np.zeros(3, np.float32))
+    assert len(emergency.FireSmokeAI(tmp_path, head=tmp_path / "old.npz").models) == 1
 
 # ------------------------------------------------------------------ person down: stricter (1.8)
 def test_person_at_the_edge_or_unsure_is_not_down():
