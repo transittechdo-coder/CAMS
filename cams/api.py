@@ -1456,7 +1456,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 "blur_unknown", "save_snapshots", "workers", "onboarding_done", "map_mode", "activity_ai", "daily_summary_time",
                 "map_mouse", "sighting_clips", "clip_seconds", "record_fps", "record_width", "recording_days",
                 "recording_max_gb", "colour_enhance", "colour_refresh", "speed_mode", "route_hours", "alert_days",
-                "min_free_gb", "tiles_max_mb", "emergency_sensitivity", "alarm_sound", "visitor_days", "vehicle_days",
+                "min_free_gb", "tiles_max_mb", "emergency_sensitivity", "alarm_sound", "fire_detection", "visitor_days", "vehicle_days",
                 "lan_access"}
     PERSONAL = {"onboarding_done", "map_mode", "map_mouse"}     # anyone signed in may change these
 
@@ -1495,6 +1495,8 @@ def create_app(sysm: CamsSystem) -> FastAPI:
                 raise HTTPException(400, "Emergency sensitivity must be low, normal or high.")
             if "alarm_sound" in values and str(values["alarm_sound"]) not in ("0", "1"):
                 raise HTTPException(400, "Alarm sound must be on or off.")
+            if "fire_detection" in values and str(values["fire_detection"]) not in ("0", "1"):
+                raise HTTPException(400, "Fire detection must be on or off.")
             if "speed_mode" in values and values["speed_mode"] not in ("auto", "fast", "balanced", "detailed"):
                 raise HTTPException(400, "Face AI speed must be auto, fast, balanced or detailed.")
             if "min_free_gb" in values and not 0 <= float(values["min_free_gb"]) <= 1000:

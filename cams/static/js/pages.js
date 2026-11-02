@@ -1268,8 +1268,13 @@ async function settings(el) {
 
   // ---- emergencies: fire, smoke, person down
   const emerg = h("div", { class: "stack" },
-    h("p", { class: "muted", style: { margin: 0 } }, "Every camera watches for fire, heavy smoke and a person lying on the ground (turn them off per camera under Cameras → Activity rules). ",
+    h("p", { class: "muted", style: { margin: 0 } }, "Every camera watches for fire, heavy smoke and a person lying on the ground. Turn fire and smoke off for all cameras below, or for one camera under Cameras → Activity rules. ",
       "When one is seen, every CAMS window turns red with a siren until someone presses ", h("b", {}, "I'm handling it"), ". It is an early warning for a person to check: it never replaces smoke detectors or fire alarms."),
+    h("label", { class: "check em-switch" }, h("input", { type: "checkbox", checked: s.fire_detection !== "0", disabled: dis, onchange: async (e) => {
+      const on = e.currentTarget.checked, box = e.currentTarget;
+      try { await put("/api/settings", { fire_detection: on ? "1" : "0" }); toast(on ? "Fire and smoke detection is ON" : "Fire and smoke detection is OFF on every camera"); }
+      catch (x) { box.checked = !on; fail(x); }
+    } }), h("b", {}, "Fire and smoke detection"), " on every camera. Untick to turn it off everywhere (saved at once; person down keeps working)."),
     h("div", { class: "grid3" },
       field("How easily it triggers", h("select", { name: "emergency_sensitivity", disabled: dis },
         [["low", "Low: only big, clear fires and smoke"], ["normal", "Normal"], ["high", "High: small fires sooner (more false alarms)"]]

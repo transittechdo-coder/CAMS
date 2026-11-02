@@ -124,6 +124,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     # and whether this PC sounds an alarm when one happens.
     "emergency_sensitivity": "normal",
     "alarm_sound": "1",
+    # Fire and smoke detection on every camera (1) or switched off everywhere (0).
+    "fire_detection": "1",
     # Let phones and other computers on this network open CAMS (guard view). Needs a restart.
     "lan_access": "0",
     # Vehicle log (number plates read at gates).

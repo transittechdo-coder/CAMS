@@ -444,6 +444,8 @@ class CamsSystem:
 
     # ================================================================ emergencies
     def _check_emergencies(self, worker, frame, ts, mon, people, objects, rules, faces) -> None:
+        if self.setting("fire_detection") == "0":       # switched off for every camera in Settings
+            rules = {**rules, "fire": False, "smoke": False}
         if not any(rules.get(k, True) for k in EMERGENCIES):
             return
         em = self.emergency.setdefault(worker.id, EmergencyMonitor())

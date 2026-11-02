@@ -201,10 +201,10 @@ async function route() {
 // Fire, smoke and a person down cover the whole window in red, with a siren, on every page,
 // until someone presses "I'm handling it". The PC running CAMS also beeps (set in Settings).
 export const EMERGENCY = {
-  fire: { title: "FIRE", icon: "🔥", say: "Possible fire" },
-  smoke: { title: "HEAVY SMOKE", icon: "💨", say: "Heavy smoke" },
-  person_down: { title: "PERSON DOWN", icon: "🚑", say: "Someone is lying on the ground" },
-  emergency_test: { title: "ALARM TEST", icon: "🔔", say: "This is only a test" },
+  fire: { title: "FIRE", say: "Possible fire" },
+  smoke: { title: "HEAVY SMOKE", say: "Heavy smoke" },
+  person_down: { title: "PERSON DOWN", say: "Someone is lying on the ground" },
+  emergency_test: { title: "ALARM TEST", say: "This is only a test" },
 };
 let siren = null, audio = null, muted = false, shownKey = "";
 const overlay = h("div", { class: "emergency hidden", role: "alertdialog", "aria-modal": "true", "aria-live": "assertive" });
@@ -232,6 +232,16 @@ function startSiren() {
 }
 function stopSiren() { siren?.stop(); siren = null; }
 
+// a warning sign inside two turning rings (drawn, so it works offline and looks the same everywhere)
+function emBadge() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 100 100"); svg.setAttribute("class", "em-badge"); svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `<circle class="b-ring" cx="50" cy="50" r="46"/><circle class="b-ring2" cx="50" cy="50" r="38"/>
+    <path class="b-tri" d="M50 24 L74 68 H26 Z"/><path class="b-mark" d="M50 39 V54 M50 60 V62"/>`;
+  return svg;
+}
+
 function showEmergencies(list) {
   if (!list.length) {
     overlay.classList.add("hidden"); document.body.classList.remove("in-emergency");
@@ -243,33 +253,49 @@ function showEmergencies(list) {
     const fresh = list.some((a) => !shownKey.split(",").includes(String(a.id)));
     if (fresh) muted = false;            // a new emergency always sounds, even after Mute
     shownKey = key;
-    overlay.replaceChildren(h("div", { class: "em-box" },
-      h("div", { class: "em-head" }, h("span", { class: "em-pulse", "aria-hidden": "true" }),
-        h("h1", {}, list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind].title),
-        h("button", { class: "em-mute", onclick: () => { muted = true; stopSiren(); } }, "Mute sound")),
-      h("div", { class: "em-list" }, list.map((a) => {
-        const k = EMERGENCY[a.kind];
-        return h("section", { class: `em-item k-${a.kind}` },
-          a.snapshot_path ? h("img", { src: `/api/snapshots/${a.snapshot_path}`, alt: `What camera ${a.camera_name || ""} saw` }) : null,
-          h("div", { class: "em-text" },
-            h("div", { class: "em-kind" }, `${k.icon} ${k.title}`),
-            h("p", {}, a.message),
-            h("p", { class: "em-when" }, `${a.camera_name ? `Camera: ${a.camera_name} · ` : ""}${new Date(a.created_at * 1000).toLocaleTimeString()}`),
-            h("div", { class: "em-actions" },
-              a.camera_id ? h("button", { onclick: () => go("live") }, "Watch the camera") : null,
-              h("button", { class: "em-ok", onclick: async (e) => {
-                e.currentTarget.disabled = true;
-                try { await post(`/api/alerts/${a.id}/ack`); } catch (x) { fail(x); }
-                pollAlerts(true);
-              } }, a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
-              a.kind !== "emergency_test" ? h("button", { title: "Nothing is wrong: CAMS learns from this and will not ring for the same thing on this camera again", onclick: async (e) => {
-                if (!confirm("Wrong alarm? CAMS will remember this picture and not ring for the same thing on this camera again.")) return;
-                e.currentTarget.disabled = true;
-                try { await post(`/api/alerts/${a.id}/wrong`); toast("Thank you: CAMS learned from this wrong alarm"); } catch (x) { fail(x); }
-                pollAlerts(true);
-              } }, "Wrong alarm") : null)));
-      })),
-      h("p", { class: "em-foot" }, "Check the camera and send help or call the emergency services (Tanzania: 114 fire and rescue, 112 general). CAMS can be wrong: it is a warning, not a fire alarm.")));
+    const main = EMERGENCY[list[0].kind] ? list[0].kind : "fire";
+    overlay.dataset.kind = list.every((a) => a.kind === main) ? main : "fire";
+    overlay.replaceChildren(
+      h("div", { class: "em-fx", "aria-hidden": "true" }, h("i", { class: "em-grid" }), h("i", { class: "em-ring" }), h("i", { class: "em-ring r2" }), h("i", { class: "em-scan" })),
+      h("div", { class: "em-box" },
+        h("i", { class: "em-corner tl" }), h("i", { class: "em-corner tr" }), h("i", { class: "em-corner bl" }), h("i", { class: "em-corner br" }),
+        h("div", { class: "em-stripes", "aria-hidden": "true" }),
+        h("div", { class: "em-head" },
+          emBadge(),
+          h("div", { class: "em-title" },
+            h("div", { class: "em-sub" }, "CAMS EMERGENCY ALERT"),
+            h("h1", { "data-text": list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind].title },
+              list.length > 1 ? `${list.length} EMERGENCIES` : EMERGENCY[list[0].kind].title)),
+          h("button", { class: "em-mute", onclick: () => { muted = true; stopSiren(); } }, "Mute sound")),
+        h("div", { class: "em-list" }, list.map((a) => {
+          const k = EMERGENCY[a.kind];
+          return h("section", { class: `em-item k-${a.kind}` },
+            h("div", { class: "em-shot" },
+              a.snapshot_path ? h("img", { src: `/api/snapshots/${a.snapshot_path}`, alt: `What camera ${a.camera_name || ""} saw` }) : h("div", { class: "em-noimg" }, "NO PICTURE"),
+              h("i", { class: "em-sweep", "aria-hidden": "true" }),
+              h("span", { class: "em-tag" }, h("i", { class: "em-rec", "aria-hidden": "true" }), a.camera_name ? a.camera_name.toUpperCase() : "CAMERA")),
+            h("div", { class: "em-text" },
+              h("div", { class: "em-kind" }, k.title),
+              h("p", { class: "em-msg" }, a.message),
+              h("dl", { class: "em-data" },
+                h("dt", {}, "CAMERA"), h("dd", {}, a.camera_name || "-"),
+                h("dt", {}, "TIME"), h("dd", {}, new Date(a.created_at * 1000).toLocaleTimeString()),
+                h("dt", {}, "STATUS"), h("dd", { class: "em-live" }, "WAITING FOR SOMEONE TO RESPOND")),
+              h("div", { class: "em-actions" },
+                h("button", { class: "em-ok", onclick: async (e) => {
+                  e.currentTarget.disabled = true;
+                  try { await post(`/api/alerts/${a.id}/ack`); } catch (x) { fail(x); }
+                  pollAlerts(true);
+                } }, a.kind === "emergency_test" ? "Stop the test" : "I'm handling it"),
+                a.camera_id ? h("button", { onclick: () => go("live") }, "Watch the camera") : null,
+                a.kind !== "emergency_test" ? h("button", { title: "Nothing is wrong: CAMS learns from this and will not ring for the same thing on this camera again", onclick: async (e) => {
+                  if (!confirm("Wrong alarm? CAMS will remember this picture and not ring for the same thing on this camera again.")) return;
+                  e.currentTarget.disabled = true;
+                  try { await post(`/api/alerts/${a.id}/wrong`); toast("Thank you: CAMS learned from this wrong alarm"); } catch (x) { fail(x); }
+                  pollAlerts(true);
+                } }, "Wrong alarm") : null)));
+        })),
+        h("p", { class: "em-foot" }, "Check the camera and send help or call the emergency services (Tanzania: 114 fire and rescue, 112 general). CAMS can be wrong: it is a warning, not a fire alarm.")));
   }
   overlay.classList.remove("hidden"); document.body.classList.add("in-emergency");
   startSiren();
