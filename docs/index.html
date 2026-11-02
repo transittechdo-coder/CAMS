@@ -88,6 +88,8 @@ section.alt { background: var(--sheet); border-top: 1px solid var(--line-2); bor
 .step h3 { font-size: 20px; margin-bottom: 8px; }
 .step p { color: var(--ink-2); margin: 0; }
 .note { margin-top: 18px; padding: 14px 18px; border-radius: 8px; background: var(--amber-soft); border: 1px solid var(--amber); font-size: 15px; }
+#phone-app .actions { margin: -16px 0 10px; }
+#phone-app .meta { font-size: 14px; color: var(--ink-2); margin-bottom: 28px; }
 
 /* feature rows */
 .feature { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr); gap: 48px; align-items: center; padding: 34px 0; }
@@ -167,6 +169,7 @@ footer a { color: var(--ink-2); }
     <a class="brand" href="#"><img src="icon.svg" alt="CAMS logo"><b>CAMS</b></a>
     <nav aria-label="Page">
       <a href="#install">Install</a>
+      <a href="#phone-app">Phone app</a>
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
       <a href="#privacy">Privacy</a>
@@ -224,6 +227,28 @@ footer a { color: var(--ink-2); }
       <div class="step"><h3>Open</h3><p>CAMS opens by itself. Later, double-click the <strong>CAMS</strong> icon on your desktop. The first time, it asks for your school's name and an admin sign-in.</p></div>
     </div>
     <p class="note">Windows may say <em>"Windows protected your PC"</em> because the installer is new and not code-signed. Click <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
+  </div>
+</section>
+
+<section id="phone-app">
+  <div class="wrap">
+    <div class="head">
+      <h2>Phone app for guards (Android)</h2>
+      <p>CAMS Guard rings a loud full-screen alarm for fire, smoke or a person down, even on silent and locked in a pocket. It also shows alerts and the cameras. It needs CAMS running on a PC on the same Wi-Fi.</p>
+    </div>
+    <div class="actions">
+      <a class="btn" href="https://github.com/transittechdo-coder/CAMS/releases/latest/download/CAMS-Guard.apk">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12M7 11l5 5 5-5M4 20h16"/></svg>
+        Download the phone app
+      </a>
+    </div>
+    <p class="meta"><span id="apk-size">CAMS-Guard.apk</span> &middot; Android 7 or newer</p>
+    <div class="steps">
+      <div class="step"><h3>Download</h3><p>Open this page <strong>on the phone</strong> and press <strong>Download the phone app</strong>.</p></div>
+      <div class="step"><h3>Install</h3><p>Open the downloaded file and press <strong>Install</strong>. If the phone asks, allow installing from this browser.</p></div>
+      <div class="step"><h3>Connect</h3><p>On the CAMS computer open <strong>Settings &rarr; Phones</strong>, tick <strong>Allow phones on this network</strong>, then press <strong>Add a phone</strong>. In the app press <strong>Scan the code</strong> and point the phone at the screen.</p></div>
+    </div>
+    <p class="note">No internet? You can skip the download: on the CAMS computer, <strong>Add a phone</strong> shows a code that installs the app straight from the computer.</p>
   </div>
 </section>
 
@@ -480,6 +505,8 @@ fetch("https://api.github.com/repos/transittechdo-coder/CAMS/releases/latest")
     const mb = asset ? `, ${Math.round(asset.size / 1048576)} MB` : "";
     const date = rel.published_at ? new Date(rel.published_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
     document.getElementById("version").textContent = `${rel.name || rel.tag_name}${mb}${date ? `, ${date}` : ""}`;
+    const apk = (rel.assets || []).find((a) => a.name === "CAMS-Guard.apk");
+    if (apk) document.getElementById("apk-size").textContent = `CAMS-Guard.apk, ${(apk.size / 1048576).toFixed(1)} MB`;
   })
   .catch(() => {});
 </script>
