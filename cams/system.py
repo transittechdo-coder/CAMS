@@ -907,6 +907,12 @@ class CamsSystem:
                     self.visitors.check_overstays(now)
                 except Exception:
                     log.exception("Visitor check failed")
+            try:
+                from . import __version__
+                from . import licence
+                licence.renew_if_due(__version__, now)     # quiet weekly licence renewal (needs internet)
+            except Exception:
+                log.exception("Licence renewal check failed")
             for w in list(self.cameras.values()):
                 st = w.state
                 if st.status == "offline" and st.offline_since and not st.offline_alerted \

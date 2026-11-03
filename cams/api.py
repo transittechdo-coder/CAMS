@@ -38,6 +38,7 @@ from .insights import at as day_at, day_bounds, day_str
 from .face_engine import ALL_ANGLES, ANGLES, REFERENCE_ANGLES, ModelsMissing
 from .system import CamsSystem, snapshot_file
 from . import geo
+from . import licence as lic
 from .recorder import clear_tmp
 from .colour import MODES as COLOUR_MODES, MODEL_NAME as COLOUR_MODEL
 from starlette.background import BackgroundTask
@@ -82,6 +83,16 @@ class PersonIn(BaseModel):
     consent_date: str = ""
     alert_on_sight: bool = False
     active: bool = True
+
+
+class LicenceKeyIn(BaseModel):
+    licence_key: str = Field(min_length=10, max_length=40)
+
+
+class LicencePayIn(BaseModel):
+    plan_code: str
+    months: int = 1
+    phone: str = Field(min_length=9, max_length=20)
 
 
 class CameraIn(BaseModel):
@@ -331,6 +342,27 @@ def create_app(sysm: CamsSystem) -> FastAPI:
     operator = Depends(need("operator"))
     admin = Depends(need("admin"))
 
+    # ------------------------------------------------------------ licence limits
+    # Golden rule: live view, recording and emergency alarms never lock because of payment.
+    def need_feature(feature: str) -> None:
+        if lic.enforced() and not lic.current().has(feature):
+            raise HTTPException(402, lic.feature_locked_message(feature))
+
+    def check_camera_limit() -> None:
+        if not lic.enforced():
+            return
+        s = lic.current()
+        n = db.query("SELECT COUNT(*) AS n FROM cameras")[0]["n"]
+        if s.max_cameras is not None and n >= s.max_cameras:
+            raise HTTPException(402, f"The {s.plan_name} plan allows {s.max_cameras} cameras and you already have {n}. "
+                                     "Open Licence & billing to start a free trial or upgrade.")
+
+    def licence_summary() -> dict:
+        s = lic.current()
+        cams = db.query("SELECT COUNT(*) AS n FROM cameras")[0]["n"]
+        return {**s.to_dict(), "key_hint": lic.key_hint(), "cameras_used": cams,
+                "enforced": lic.enforced(), "welcome_done": db.get_setting("licence_welcome_done") == "1"}
+
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
@@ -357,7 +389,70 @@ def create_app(sysm: CamsSystem) -> FastAPI:
             "onboarding_done": db.get_setting("onboarding_done") == "1",
             "map_mouse": db.get_setting("map_mouse") or "standard",
             "ui_loads": sysm.stats.get("ui_loads", 0),
+            "licence": licence_summary() if user else None,
         }
+
+    # ------------------------------------------------------------ licence & billing
+    def _lic_call(fn, *a):
+        try:
+            return fn(*a)
+        except lic.LicenceError as e:
+            raise HTTPException(e.status if 400 <= e.status < 600 else 400, str(e))
+
+    @app.get("/api/licence")
+    def licence_get(user=viewer):
+        return licence_summary()
+
+    @app.get("/api/licence/plans")
+    def licence_plans(user=viewer):
+        return {"plans": lic.plans(), "feature_names": lic.FEATURE_NAMES}
+
+    @app.post("/api/licence/trial")
+    def licence_trial(user=admin):
+        _lic_call(lic.start_trial, __version__)
+        db.set_settings({"licence_welcome_done": "1"})
+        db.audit(user["username"], "licence_trial", {})
+        return licence_summary()
+
+    @app.post("/api/licence/activate")
+    def licence_activate(body: LicenceKeyIn, user=admin):
+        _lic_call(lic.activate, body.licence_key, __version__)
+        db.set_settings({"licence_welcome_done": "1"})
+        db.audit(user["username"], "licence_activate", {"key": body.licence_key.strip()[-4:]})
+        return licence_summary()
+
+    @app.post("/api/licence/renew")
+    def licence_renew(user=admin):
+        _lic_call(lic.renew, __version__)
+        return licence_summary()
+
+    @app.post("/api/licence/deactivate")
+    def licence_deactivate(user=admin):
+        msg = _lic_call(lic.deactivate)
+        db.audit(user["username"], "licence_deactivate", {})
+        return {**licence_summary(), "message": msg}
+
+    @app.post("/api/licence/welcome-done")
+    def licence_welcome_done(user=admin):
+        db.set_settings({"licence_welcome_done": "1"})
+        return {"ok": True}
+
+    @app.post("/api/licence/pay")
+    def licence_pay(body: LicencePayIn, user=admin):
+        if body.plan_code not in ("pro", "premium") or body.months not in (1, 12):
+            raise HTTPException(400, "Choose Pro or Premium, monthly or yearly.")
+        res = _lic_call(lic.start_payment, body.plan_code, body.months, body.phone)
+        db.audit(user["username"], "licence_pay_start", {"plan": body.plan_code, "months": body.months, "amount_tzs": res.get("amount_tzs")})
+        return res
+
+    @app.get("/api/licence/pay/{payment_id}")
+    def licence_pay_status(payment_id: str, user=admin):
+        if not re.fullmatch(r"[0-9a-fA-F-]{36}", payment_id):
+            raise HTTPException(400, "Bad payment id.")
+        res = _lic_call(lic.payment_status, payment_id)
+        if res["status"] == "paid":
+            db.audit(user["username"], "licence_paid", {"receipt": res.get("receipt_no")})
+        return {**res, "licence": licence_summary()}
 
     @app.post("/api/setup")
     def setup(body: SetupIn, response: Response, request: Request):
@@ -639,6 +734,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.post("/api/people/{pid}/samples")
     async def enroll_upload(pid: int, files: list[UploadFile] = File(...), angle: str = Form(""), user=operator):
+        need_feature("face_recognition")
         _person_or_404(sysm, pid)
         results, errors = [], []
         for f in files:
@@ -653,6 +749,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.post("/api/people/{pid}/samples/from-camera/{cam_id}")
     def enroll_from_camera(pid: int, cam_id: int, angle: str = "", user=operator):
+        need_feature("face_recognition")
         _person_or_404(sysm, pid)
         w = sysm.cameras.get(cam_id)
         frame = w.latest() if w else None
@@ -662,6 +759,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.post("/api/people/{pid}/samples/video")
     async def enroll_video(pid: int, file: UploadFile = File(...), user=operator):
+        need_feature("face_recognition")
         """360-degree enrolment from a short turn-around video: keeps the best frame per angle."""
         _person_or_404(sysm, pid)
         data = await file.read()
@@ -881,6 +979,7 @@ def create_app(sysm: CamsSystem) -> FastAPI:
 
     @app.post("/api/cameras")
     def add_camera(body: CameraIn, user=operator):
+        check_camera_limit()
         cid = db.execute(
             "INSERT INTO cameras(name, source, kind, enabled, restricted, building_id, floor, map_x, map_y, direction, "
             "fov, analytics, record_mode, colour_mode, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

@@ -617,3 +617,36 @@ button.ghost.name { padding: 0; font-weight: 600; color: var(--teal); text-align
 .qr.big svg { width: 280px; height: 280px; }
 .big-steps { margin: 0; padding-left: 22px; display: grid; gap: 10px; font-size: 15px; }
 @media (max-width: 700px) { .pair-box { grid-template-columns: 1fr; justify-items: center; } }
+
+/* ---------------------------------------------------------------- licence & billing */
+.licence-banner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.licence-banner .grow { flex: 1; min-width: 200px; }
+.licence-plan-name { font-family: var(--display); font-size: 30px; font-weight: 600; line-height: 1; }
+.licence-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
+.licence-facts dt { color: var(--ink-3); }
+.licence-facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+.licence-plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.licence-card { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.licence-card.best { border-color: var(--teal); }
+.licence-card.mine { background: var(--teal-soft); }
+.licence-card-head { display: flex; align-items: center; justify-content: space-between; font-size: 17px; }
+.licence-price { font-size: 15px; }
+.licence-price b { font-size: 20px; }
+.licence-feats { list-style: none; margin: 6px 0 8px; padding: 0; display: grid; gap: 3px; font-size: 13px; flex: 1; }
+.licence-feats li::before { display: inline-block; width: 18px; font-weight: 700; }
+.licence-feats li.yes::before { content: "✓"; color: var(--teal); }
+.licence-feats li.no { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line); }
+.licence-feats li.no::before { content: "–"; }
+.licence-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.licence-choice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left; padding: 16px; height: auto; white-space: normal; }
+.licence-choice b { font-size: 16px; }
+.licence-choice ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); }
+.licence-choice.best { border-color: var(--teal); background: var(--teal-soft); }
+.licence-wait { display: grid; gap: 10px; justify-items: center; text-align: center; padding: 8px 4px; }
+.licence-wait .row { justify-self: stretch; }
+.licence-phone { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; background: var(--teal-soft); color: var(--teal); font-size: 28px; font-weight: 700; animation: licence-pulse 1.6s ease-in-out infinite; }
+.licence-phone svg { width: 30px; height: 30px; }
+.licence-wait.ok .licence-phone { animation: none; }
+@keyframes licence-pulse { 50% { box-shadow: 0 0 0 10px transparent; transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) { .licence-phone { animation: none; } }
+@media (max-width: 760px) { .licence-plans, .licence-choices { grid-template-columns: 1fr; } }

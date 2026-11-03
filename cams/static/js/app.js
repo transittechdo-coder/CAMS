@@ -2,6 +2,9 @@
 import { logoMark, h, get, post, icon, toast, fail, ICONS, field, setPrefs } from "./util.js";
 import { PAGES } from "./pages.js";
 import { startTour, tourWanted } from "./tour.js";
+import { licencePage, licenceBanner, maybeWelcome } from "./licence.js";
+
+PAGES.licence = licencePage;
 
 const root = document.getElementById("root");
 export const state = { status: null, user: null, current: null, alertsSeen: 0 };
@@ -20,6 +23,7 @@ const NAV = [
   { id: "report", label: "Daily report", icon: "report" },
   { id: "alerts", label: "Alerts", icon: "alerts" },
   { id: "health", label: "System health", icon: "health", role: "operator" },
+  { id: "licence", label: "Licence & billing", icon: "star" },
   { id: "settings", label: "Settings", icon: "settings" },
   { id: "guide", label: "How to use CAMS", icon: "guide" },
 ];
@@ -170,7 +174,8 @@ function renderShell() {
   window.onhashchange = route;
   route();
   pollAlerts();
-  if (tourWanted(state)) setTimeout(() => startTour(state), 500);
+  if (state.status.licence && !state.status.licence.welcome_done && !state.status.licence.key_hint && can("admin") && state.status.licence.enforced) setTimeout(maybeWelcome, 400);
+  else if (tourWanted(state)) setTimeout(() => startTour(state), 500);
 }
 
 export function go(page, arg) {
@@ -193,6 +198,8 @@ async function route() {
   if (!state.status.models_ok) {
     page$.append(h("div", { class: "banner red" }, "Face recognition is switched off because the AI model files are missing. Reinstall CAMS, or run scripts/download_models.py once."));
   }
+  const lb = licenceBanner(id);
+  if (lb) page$.append(lb);
   try { pageCleanup = (await def(page$, arg ? decodeURIComponent(arg) : undefined)) || null; }
   catch (e) { fail(e); }
 }

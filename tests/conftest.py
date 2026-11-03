@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+# Plan limits are tested in test_licence.py; the other tests run with them off.
+os.environ.setdefault("CAMS_LICENCE_ENFORCE", "0")
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 

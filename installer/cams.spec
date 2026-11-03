@@ -22,6 +22,7 @@ a = Analysis(
         "uvicorn.logging", "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
         "uvicorn.protocols.websockets.auto", "uvicorn.lifespan.on", "multipart",
         "webview.platforms.edgechromium", "webview.platforms.winforms", "psutil", "segno",
+        "cryptography.hazmat.primitives.asymmetric.ed25519", "cams.licence",
     ],
     excludes=["matplotlib", "pytest", "IPython"],
     noarchive=False,
